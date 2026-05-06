@@ -1,0 +1,1322 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>504 班級智慧看板 (節慶特餐版 v34)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- 引入 Confetti 特效庫 -->
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Just+Another+Hand&display=swap');
+
+        /* 基礎設定 */
+        body {
+            font-family: "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+            background: linear-gradient(135deg, #e0f2fe 0%, #f0f9ff 100%);
+            color: #334155;
+            user-select: none;
+            overflow-x: hidden;
+        }
+
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.6);
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.1);
+        }
+
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        
+        .chalkboard {
+            background-color: #2c3e50;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='4' viewBox='0 0 4 4'%3E%3Cpath fill='%239C92AC' fill-opacity='0.1' d='M1 3h1v1H1V3zm2-2h1v1H3V1z'%3E%3C/path%3E%3C/svg%3E");
+            box-shadow: inset 0 0 20px rgba(0,0,0,0.5);
+            color: #ecf0f1;
+        }
+        .chalk-font {
+            font-family: "KaiTi", "BiauKai", cursive;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+        }
+        
+        @keyframes float {
+            0% { transform: translateY(0px); }
+            50% { transform: translateY(-5px); }
+            100% { transform: translateY(0px); }
+        }
+        .bg-float { animation: float 6s ease-in-out infinite; }
+
+        .active-glow {
+            position: relative;
+            z-index: 10;
+            border: 2px solid #3b82f6;
+            background: linear-gradient(90deg, #3b82f6 0%, #2563eb 100%);
+            color: white !important;
+            box-shadow: 0 0 15px rgba(59, 130, 246, 0.5);
+            animation: ripple-pulse 2s infinite;
+        }
+        @keyframes ripple-pulse {
+            0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7); }
+            70% { box-shadow: 0 0 0 12px rgba(59, 130, 246, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+        }
+
+        @keyframes bubble-rise {
+            0% { bottom: -5%; opacity: 0; transform: translateX(0) scale(0.5); }
+            20% { opacity: 0.6; }
+            50% { transform: translateX(15px) scale(1); }
+            100% { bottom: 100%; opacity: 0; transform: translateX(-15px) scale(1.2); }
+        }
+        .animate-bubble { 
+            position: absolute; 
+            border-radius: 50%; 
+            background: radial-gradient(circle at 30% 30%, rgba(255,255,255,0.9), rgba(255,255,255,0.1));
+            animation: bubble-rise infinite ease-in; 
+        }
+
+        /* 魚類與食物的平滑過渡 */
+        .fish-container {
+            position: absolute;
+            transition: left 0.1s linear, top 0.1s linear;
+            will-change: left, top;
+            transform: translate(-50%, -50%); 
+        }
+        .fish-sprite {
+            transition: transform 0.3s ease, filter 0.5s ease;
+        }
+
+        /* 新增：食物共用屬性與一般飼料樣式 */
+        .food-base {
+            position: absolute;
+            transition: left 0.1s linear, top 0.1s linear;
+            will-change: left, top, transform;
+        }
+        .food-pellet {
+            width: 14px;
+            height: 14px;
+            background-color: #8B4513;
+            border: 2px solid #5C3A21;
+            border-radius: 50%;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef, useCallback } = React;
+
+        // --- Helper: 日期格式化 YYYY-MM-DD ---
+        const getTodayStr = (d) => {
+            return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+        };
+
+        // --- 節慶特餐判斷邏輯 ---
+        const getHolidayFood = (currentDate) => {
+            const currentYear = currentDate.getFullYear();
+            // 將時間重置為當日凌晨，確保計算天數精準
+            const today = new Date(currentYear, currentDate.getMonth(), currentDate.getDate());
+
+            // 節日設定 (月, 日, 專屬特餐) 
+            const holidays = [
+                { month: 2, day: 14, icon: '🍫', name: '情人節' },
+                { month: 4, day: 4, icon: '🍔', name: '兒童節' },
+                { month: 6, day: 19, icon: '🥟', name: '端午節' }, // 2026 對應國曆
+                { month: 9, day: 25, icon: '🥮', name: '中秋節' }, // 2026 對應國曆
+                { month: 9, day: 28, icon: '🍎', name: '教師節' },
+                { month: 10, day: 31, icon: '🍬', name: '萬聖節' },
+                { month: 12, day: 25, icon: '🍗', name: '聖誕節' },
+                { month: 12, day: 31, icon: '🥂', name: '跨年' }
+            ];
+
+            for (const holiday of holidays) {
+                const hDate = new Date(currentYear, holiday.month - 1, holiday.day);
+                const diffTime = hDate.getTime() - today.getTime();
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+                // 若在節慶前 7 天內 (包含當天)，顯示專屬大餐
+                if (diffDays >= 0 && diffDays <= 7) {
+                    return holiday.icon;
+                }
+            }
+            return null; // 非節慶期間回傳 null (使用一般飼料)
+        };
+
+        // --- 設定與資料 ---
+        const getDailySchedule = (day) => {
+            if (day === 0 || day === 6) {
+                return [{ id: 'weekend', type: 'leave', start: '00:00', end: '23:59', label: '🏖️ 週末假期愉快' }];
+            }
+            const weeklySubjects = {
+                1: ['藝術', '藝術', '國語', '數學', '本土語', '綜合', '自然'], 
+                2: ['數學', '社會', '社會', '國際', '體育', '國語', '英語'], 
+                3: ['彈性', '國語', '探索', '探索'], 
+                4: ['國語', '音樂', '健康', '體育', '英語', '數學', '綜合'], 
+                5: ['國語', '數學', '自然', '自然', '社會', '社團', '社團'], 
+            };
+            const todaySubjects = weeklySubjects[day] || ['科目', '科目', '科目', '科目', '科目', '科目', '科目'];
+            const brushingLabel = (day === 2) ? '🦷 潔牙+含氟漱口水' : '🦷 潔牙時間';
+
+            const commonSlots = [
+                { id: 'prep', type: 'break', start: '08:40', end: '08:45', label: '🔔 準備上課' },
+                { id: 5, type: 'class', start: '08:45', end: '09:25', label: `第一節：${todaySubjects[0]||''}` },
+                { id: 6, type: 'break', start: '09:25', end: '09:35', label: '☕ 下課休息' },
+                { id: 7, type: 'class', start: '09:35', end: '10:15', label: `第二節：${todaySubjects[1]||''}` },
+                { id: 8, type: 'break', start: '10:15', end: '10:30', label: '🏃 大下課' },
+                { id: 9, type: 'class', start: '10:30', end: '11:10', label: `第三節：${todaySubjects[2]||''}` },
+                { id: 10, type: 'break', start: '11:10', end: '11:20', label: '☕ 下課休息' },
+                { id: 11, type: 'class', start: '11:20', end: '12:00', label: `第四節：${todaySubjects[3]||''}` },
+                { id: 12, type: 'lunch', start: '12:00', end: '12:30', label: '🍱 午餐時間' },
+                { id: 99, type: 'brushing', start: '12:30', end: '12:35', label: brushingLabel },
+                { id: 13, type: 'nap', start: '12:35', end: '13:10', label: '😴 午休時間' },
+                { id: 14, type: 'break', start: '13:10', end: '13:20', label: '🔔 下課' },
+            ];
+
+            let afternoonSlots = [];
+            if (day === 3) {
+                 const wedSpecific = [
+                    { id: 12, type: 'lunch', start: '12:00', end: '12:30', label: '🍱 午餐時間' },
+                    { id: 21, type: 'leave', start: '12:50', end: '13:00', label: '🎒 放學' }
+                 ];
+                 const preLunch = commonSlots.filter(s => ['prep', 5, 6, 7, 8, 9, 10, 11].includes(s.id));
+                 return [...getMorningSlots(day), ...preLunch, ...wedSpecific];
+
+            } else {
+                 afternoonSlots = [
+                    { id: 15, type: 'class', start: '13:20', end: '14:00', label: `第五節：${todaySubjects[4]||''}` },
+                    { id: 16, type: 'break', start: '14:00', end: '14:10', label: '☕ 下課休息' },
+                    { id: 17, type: 'class', start: '14:10', end: '14:50', label: `第六節：${todaySubjects[5]||''}` },
+                    { id: 18, type: 'break', start: '14:50', end: '15:00', label: '☕ 下課休息' },
+                    { id: 19, type: 'class', start: '15:00', end: '15:40', label: `第七節：${todaySubjects[6]||''}` },
+                    { id: 20, type: 'break', start: '15:40', end: '15:50', label: '👩‍🏫 導師時間' },
+                    { id: 21, type: 'leave', start: '15:50', end: '16:00', label: '🎒 放學' }
+                ];
+                return [...getMorningSlots(day), ...commonSlots, ...afternoonSlots];
+            }
+        };
+
+        const getMorningSlots = (day) => {
+             if (day === 4) { 
+                return [
+                    { id: 'm1', type: 'study', start: '07:50', end: '08:25', label: '📖 早自修' },
+                    { id: 'm2', type: 'clean', start: '08:25', end: '08:40', label: '🧹 打掃時間' }
+                ];
+            } else if (day === 3 || day === 5) { 
+                return [
+                    { id: 'm1', type: 'clean', start: '07:50', end: '08:05', label: '🧹 打掃時間' },
+                    { id: 'm2', type: 'study', start: '08:05', end: '08:40', label: '📖 早自修' }
+                ];
+            } else { 
+                return [
+                    { id: 'm1', type: 'study', start: '07:50', end: '08:00', label: '📖 晨讀時間' },
+                    { id: 'm2', type: 'clean', start: '08:00', end: '08:15', label: '🧹 打掃時間' },
+                    { id: 'm3', type: 'study', start: '08:15', end: '08:40', label: '📖 早自修' }
+                ];
+            }
+        }
+
+        const DEFAULT_REMINDERS = {
+            class: ["📖 上課鐘響，請立即回座","👄 專心聽講，不交頭接耳","✨ 桌面保持整潔","🧘 坐姿端正，抬頭挺胸"],
+            break: ["🚶 走廊不奔跑，輕聲細語","💧 喝水上廁所","🌱 愛惜公物，節約能源","👋 看到師長要問好"],
+            lunch: ["🤫 取餐排隊守秩序","😋 細嚼慢嚥，不交談","🍚 惜食不浪費","🧽 保持桌面整潔"],
+            clean: ["🤝 分工合作，確實打掃","🪑 桌椅靠攏，垃圾分類","🧹 工具歸位，整齊排放"],
+            brushing: ["🎵 配合潔牙歌，仔細刷牙","🦷 內側外側咬合面都要刷","✨ 潔牙後，杯子歸位", "🍶 週二記得使用含氟漱口水"],
+            nap: ["😴 趴下休息，保持安靜", "🔋 閉目養神，下午更有力", "🤫 動作放輕，不影響他人"]
+        };
+
+        const FISH_ICONS = ['🐠', '🐟', '🐡', '🐢', '🦈', '🦐', '🦑', '🦀', '🐙', '🐬', '🐋', '🦞', '🦭', '🐧'];
+        
+        const AQUARIUM_BUBBLES = Array.from({length: 15}, (_, i) => ({
+            id: i, 
+            left: `${Math.random() * 90 + 5}%`, 
+            delay: `${Math.random() * 5}s`, 
+            duration: `${3 + Math.random() * 4}s`,
+            size: `${5 + Math.random() * 15}px`
+        }));
+
+        const playBeep = (duration = 100) => {
+            const AudioContext = window.AudioContext || window.webkitAudioContext;
+            if (!AudioContext) return;
+            const ctx = new AudioContext();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start();
+            gain.gain.setValueAtTime(0.5, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + (duration / 1000));
+            setTimeout(() => { osc.stop(); ctx.close(); }, duration);
+        };
+
+        const formatTime = (date) => {
+            const h = String(date.getHours()).padStart(2, '0');
+            const m = String(date.getMinutes()).padStart(2, '0');
+            const s = String(date.getSeconds()).padStart(2, '0');
+            return `${h}:${m}:${s}`;
+        };
+
+        const App = () => {
+            const [now, setNow] = useState(new Date());
+            const [offset, setOffset] = useState(() => parseInt(localStorage.getItem('clock_offset') || 0, 10));
+            
+            const [simulatedDay, setSimulatedDay] = useState(() => {
+                const saved = localStorage.getItem('simulated_day');
+                return saved !== null ? saved : 'auto';
+            });
+
+            const adjustedNow = useMemo(() => new Date(now.getTime() + offset), [now, offset]);
+            const effectiveDay = useMemo(() => {
+                if (simulatedDay === 'auto') return adjustedNow.getDay();
+                return parseInt(simulatedDay, 10);
+            }, [simulatedDay, adjustedNow]);
+
+            const [schedule, setSchedule] = useState([]);
+
+            useEffect(() => {
+                const scheduleStorageKey = `daily_schedule_v34_day_${effectiveDay}`;
+                const saved = localStorage.getItem(scheduleStorageKey);
+                if (saved) {
+                    setSchedule(JSON.parse(saved));
+                } else {
+                    setSchedule(getDailySchedule(effectiveDay));
+                }
+            }, [effectiveDay]);
+
+            const [reminders, setReminders] = useState(() => {
+                const saved = localStorage.getItem('context_reminders_v2');
+                return saved ? JSON.parse(saved) : DEFAULT_REMINDERS;
+            });
+
+            const [contactFontSize, setContactFontSize] = useState(() => {
+                const saved = localStorage.getItem('contact_font_size');
+                if (saved) return parseInt(saved, 10);
+                return (typeof window !== 'undefined' && window.innerWidth < 1024) ? 24 : 48;
+            });
+
+            // --- 紀錄所有上課日 ---
+            const [schoolDays, setSchoolDays] = useState(() => {
+                const saved = localStorage.getItem('school_days_v34');
+                return saved ? JSON.parse(saved) : [];
+            });
+
+            // --- 魚種與連續餵食紀錄 ---
+            const [fishStats, setFishStats] = useState(() => {
+                const saved = localStorage.getItem('fish_stats_v34');
+                if (saved) return JSON.parse(saved);
+                
+                const oldSaved = localStorage.getItem('fish_stats_v33');
+                if (oldSaved) {
+                    return JSON.parse(oldSaved);
+                }
+
+                const initial = {};
+                for(let i=1; i<=26; i++) {
+                    initial[i] = { type: FISH_ICONS[i % FISH_ICONS.length], streak: 0, lastFed: '', lastFedTimestamp: 0, leaveDates: [] };
+                }
+                return initial;
+            });
+
+            // --- 每日餵食狀態 ---
+            const [feedStates, setFeedStates] = useState(() => {
+                const saved = localStorage.getItem('feed_states_v34');
+                const todayStr = getTodayStr(new Date()); 
+                if (saved) {
+                    const data = JSON.parse(saved);
+                    if (data.date === todayStr) return data.feeds;
+                }
+                const initial = {};
+                for(let i=1; i<=26; i++) initial[i] = false;
+                return initial;
+            });
+
+            const lastDateRef = useRef(getTodayStr(new Date()));
+
+            const [foodsState, setFoodsState] = useState([]); 
+            const [contactBookContent, setContactBookContent] = useState(() => localStorage.getItem('contact_book') || "");
+            const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+            const [settingsTab, setSettingsTab] = useState('schedule');
+            
+            const [weather, setWeather] = useState({ temp: '--', code: -1, loading: true });
+            const [activeSlotId, setActiveSlotId] = useState(null);
+            const [countDownMode, setCountDownMode] = useState('idle');
+            const [countDownSeconds, setCountDownSeconds] = useState(0);
+            const [countDownLabel, setCountDownLabel] = useState("");
+
+            const itemRefs = useRef({});
+            
+            // 動畫與物理引擎 Refs
+            const animationRef = useRef();
+            const lastTimeRef = useRef(performance.now());
+            const fishesLogic = useRef({});
+            const foodsLogic = useRef({});
+            
+            // 為了讓動畫內部取得最新狀態
+            const fishStatsRef = useRef(fishStats);
+            const schoolDaysRef = useRef(schoolDays);
+            const feedStatesRef = useRef(feedStates);
+            useEffect(() => { fishStatsRef.current = fishStats; }, [fishStats]);
+            useEffect(() => { schoolDaysRef.current = schoolDays; }, [schoolDays]);
+            useEffect(() => { feedStatesRef.current = feedStates; }, [feedStates]);
+
+            useEffect(() => localStorage.setItem('clock_offset', offset), [offset]);
+            useEffect(() => localStorage.setItem('simulated_day', simulatedDay), [simulatedDay]);
+            useEffect(() => localStorage.setItem('contact_book', contactBookContent), [contactBookContent]);
+            useEffect(() => localStorage.setItem('context_reminders_v2', JSON.stringify(reminders)), [reminders]);
+            useEffect(() => localStorage.setItem('contact_font_size', contactFontSize), [contactFontSize]);
+            useEffect(() => localStorage.setItem('fish_stats_v34', JSON.stringify(fishStats)), [fishStats]);
+            useEffect(() => localStorage.setItem('school_days_v34', JSON.stringify(schoolDays)), [schoolDays]);
+            
+            useEffect(() => {
+                if (schedule.length > 0) {
+                    localStorage.setItem(`daily_schedule_v34_day_${effectiveDay}`, JSON.stringify(schedule));
+                }
+            }, [schedule, effectiveDay]);
+
+            useEffect(() => {
+                const todayStr = getTodayStr(adjustedNow);
+                localStorage.setItem('feed_states_v34', JSON.stringify({ date: todayStr, feeds: feedStates }));
+            }, [feedStates, adjustedNow]);
+
+            // --- 智能上課日判定機制 ---
+            useEffect(() => {
+                const todayStr = getTodayStr(adjustedNow);
+                const hasAnyFed = Object.values(feedStates).some(Boolean);
+                
+                setSchoolDays(prev => {
+                    const includes = prev.includes(todayStr);
+                    if (hasAnyFed && !includes) {
+                        return [...prev, todayStr].sort(); 
+                    } else if (!hasAnyFed && includes) {
+                        return prev.filter(d => d !== todayStr); 
+                    }
+                    return prev;
+                });
+            }, [feedStates, adjustedNow]);
+
+            useEffect(() => {
+                const timer = setInterval(() => {
+                    const freshNow = new Date();
+                    setNow(freshNow);
+                    
+                    // 跨夜自動重置餵食狀態
+                    const currentToday = getTodayStr(freshNow);
+                    if (currentToday !== lastDateRef.current) {
+                        lastDateRef.current = currentToday;
+                        setFeedStates(prev => {
+                           const initial = {};
+                           for(let i=1; i<=26; i++) initial[i] = false;
+                           return initial;
+                        });
+                    }
+                }, 1000);
+                return () => clearInterval(timer);
+            }, []);
+
+            useEffect(() => {
+                const fetchWeather = async () => {
+                    try {
+                        const res = await fetch('https://api.open-meteo.com/v1/forecast?latitude=24.8138&longitude=120.9675&current=temperature_2m,weather_code&timezone=Asia%2FTaipei');
+                        const data = await res.json();
+                        setWeather({
+                            temp: Math.round(data.current.temperature_2m),
+                            code: data.current.weather_code,
+                            loading: false
+                        });
+                    } catch (error) { setWeather(w => ({ ...w, loading: false })); }
+                };
+                fetchWeather();
+                const wTimer = setInterval(fetchWeather, 1800000);
+                return () => clearInterval(wTimer);
+            }, []);
+
+            // --- 真實物理引擎與遊戲迴圈 ---
+            useEffect(() => {
+                for(let i=1; i<=26; i++) {
+                    if (!fishesLogic.current[i]) {
+                        fishesLogic.current[i] = {
+                            x: Math.random() * 80 + 10,
+                            y: Math.random() * 70 + 10,
+                            tx: Math.random() * 80 + 10,
+                            ty: Math.random() * 70 + 10,
+                            speed: Math.random() * 0.04 + 0.02, 
+                            state: 'wander',
+                            flip: false,
+                            targetFoodId: null
+                        };
+                    }
+                }
+
+                const updateLoop = (time) => {
+                    const dt = time - lastTimeRef.current;
+                    lastTimeRef.current = time;
+                    const safeDt = Math.min(dt, 50);
+
+                    const foods = foodsLogic.current;
+                    const fishes = fishesLogic.current;
+
+                    // 1. 更新食物物理 (搖晃下落)
+                    for (const fId in foods) {
+                        const f = foods[fId];
+                        if (f.y < 92) {
+                            f.y += 0.015 * safeDt; 
+                            f.swayTime += safeDt;
+                            f.x = f.startX + Math.sin(f.swayTime * 0.003) * 2.5;
+                        } else {
+                            f.y = 92; 
+                            f.swayTime += safeDt;
+                            f.x = f.startX + Math.sin(f.swayTime * 0.001) * 0.5;
+                        }
+                        
+                        const el = document.getElementById(fId);
+                        if (el) {
+                            el.style.top = `${f.y}%`;
+                            el.style.left = `${f.x}%`;
+                            const rotateAngle = Math.cos(f.swayTime * 0.003) * 30; 
+                            el.style.transform = `translate(-50%, -50%) rotate(${rotateAngle}deg)`;
+                        }
+                    }
+
+                    // 2. 更新魚群游動與生死判斷
+                    for (let i = 1; i <= 26; i++) {
+                        const fish = fishes[i];
+                        const stat = fishStatsRef.current[i] || { streak: 0, lastFed: '', leaveDates: [] };
+                        const todayStr = getTodayStr(new Date(Date.now() + offset));
+                        const isLeaveToday = stat.leaveDates && stat.leaveDates.includes(todayStr);
+                        
+                        // 計算錯過的天數 (排除請假)
+                        const missedDays = schoolDaysRef.current.filter(d => d > stat.lastFed && !(stat.leaveDates || []).includes(d)).length;
+                        
+                        // 生死判斷：如果錯過 >= 2 天，且今天尚未被餵食，且今天沒有請假，就餓死
+                        const isDead = missedDays >= 2 && !feedStatesRef.current[i] && !isLeaveToday;
+
+                        // 成長邏輯：每 5 天成長一次
+                        const growthStage = Math.floor(stat.streak / 5);
+                        const fishSize = Math.min(84, 24 + growthStage * 12);
+                        
+                        const speedMultiplier = fishSize / 24; 
+                        const currentBaseSpeed = fish.speed * speedMultiplier;
+                        const collisionDist = 1.5 + (fishSize / 40);
+
+                        const sprite = document.getElementById(`fish-sprite-${i}`);
+
+                        if (isDead) {
+                            fish.state = 'dead';
+                            fish.flip = false; 
+                            if (fish.y < 90) {
+                                fish.y += 0.05 * safeDt; 
+                            } else {
+                                fish.y = 90;
+                            }
+                            
+                            if (sprite) {
+                                sprite.style.transform = 'scaleY(-1)'; 
+                                sprite.style.filter = 'grayscale(100%) opacity(70%)';
+                            }
+                        } else {
+                            if (sprite) {
+                                sprite.style.filter = 'none';
+                                sprite.style.transform = fish.flip ? 'scaleX(-1)' : 'scaleX(1)';
+                            }
+
+                            let tx = fish.tx;
+                            let ty = fish.ty;
+
+                            if (fish.state === 'seek') {
+                                const targetFood = foods[fish.targetFoodId];
+                                if (targetFood) {
+                                    tx = targetFood.x; 
+                                    ty = targetFood.y;
+                                } else {
+                                    fish.state = 'wander';
+                                    fish.tx = Math.random() * 80 + 10;
+                                    fish.ty = Math.random() * 70 + 15;
+                                }
+                            }
+
+                            const dx = tx - fish.x;
+                            const dy = ty - fish.y;
+                            const dist = Math.sqrt(dx * dx + dy * dy);
+
+                            if (fish.state === 'wander' && dist < 2) {
+                                fish.tx = Math.random() * 80 + 10;
+                                fish.ty = Math.random() * 70 + 15;
+                            }
+
+                            if (fish.state === 'seek' && dist < collisionDist) {
+                                const fId = fish.targetFoodId;
+                                if (foods[fId]) {
+                                    delete foods[fId];
+                                    document.dispatchEvent(new CustomEvent('fishEat', { detail: { num: i, foodId: fId } }));
+                                }
+                                fish.state = 'wander';
+                                fish.tx = Math.random() * 80 + 10;
+                                fish.ty = Math.random() * 70 + 15;
+                            }
+
+                            if (dist > 0.5) {
+                                if (dx > 0.5) fish.flip = true; 
+                                else if (dx < -0.5) fish.flip = false;
+
+                                const statusSpeed = isLeaveToday ? currentBaseSpeed * 0.5 : currentBaseSpeed;
+                                const activeMoveSpeed = fish.state === 'seek' ? statusSpeed * 2.5 : statusSpeed;
+                                const stepX = (dx / dist) * activeMoveSpeed * (safeDt / 16);
+                                const stepY = (dy / dist) * activeMoveSpeed * (safeDt / 16);
+
+                                if (Math.abs(stepX) > Math.abs(dx)) fish.x = tx;
+                                else fish.x += stepX;
+
+                                if (Math.abs(stepY) > Math.abs(dy)) fish.y = ty;
+                                else fish.y += stepY;
+                            }
+                        }
+
+                        // 應用位置到 DOM
+                        const container = document.getElementById(`fish-container-${i}`);
+                        if (container) {
+                            container.style.left = `${fish.x}%`;
+                            container.style.top = `${fish.y}%`;
+                        }
+                    }
+
+                    animationRef.current = requestAnimationFrame(updateLoop);
+                };
+
+                lastTimeRef.current = performance.now();
+                animationRef.current = requestAnimationFrame(updateLoop);
+                
+                return () => cancelAnimationFrame(animationRef.current);
+            }, [offset]);
+
+            // --- 監聽吃掉事件 (結算 Streak 與噴發彩帶) ---
+            useEffect(() => {
+                const handleEat = (e) => {
+                    const { num, foodId } = e.detail;
+                    
+                    setFoodsState(prev => prev.filter(f => f.id !== foodId));
+                    
+                    setFishStats(prev => {
+                        const todayStr = getTodayStr(adjustedNow);
+                        const stat = prev[num] || { type: FISH_ICONS[num%FISH_ICONS.length], streak: 0, lastFed: '', lastFedTimestamp: 0, leaveDates: [] };
+                        
+                        // 計算嚴格錯過天數 (只要中斷 1 天以上，就重置為 1)
+                        const missedDays = schoolDaysRef.current.filter(d => d > stat.lastFed && d < todayStr && !(stat.leaveDates || []).includes(d)).length;
+                        
+                        let newStreak = stat.streak;
+
+                        if (missedDays >= 1 || stat.lastFed === '') {
+                            // 中斷了，或是第一次餵食，重新計算
+                            newStreak = 1;
+                        } else if (stat.lastFed !== todayStr) {
+                            // 正常接續餵食
+                            newStreak += 1;
+                        }
+
+                        // ★ 成長慶祝：當 streak 剛好為 5 的倍數，噴發大量彩帶！
+                        if (newStreak > 0 && newStreak % 5 === 0 && stat.lastFed !== todayStr) {
+                            confetti({
+                                particleCount: 150,
+                                spread: 80,
+                                origin: { y: 0.6 },
+                                colors: ['#4ade80', '#fbbf24', '#60a5fa', '#f87171', '#c084fc']
+                            });
+                        }
+
+                        return { ...prev, [num]: { ...stat, streak: newStreak, lastFed: todayStr, lastFedTimestamp: Date.now() } };
+                    });
+                };
+                
+                document.addEventListener('fishEat', handleEat);
+                return () => document.removeEventListener('fishEat', handleEat);
+            }, [adjustedNow]);
+
+            // --- 撤銷餵食機制 ---
+            const handleUndoFeed = (num) => {
+                if (!confirm(`確定要撤銷 ${num} 號今天的餵食紀錄嗎？`)) return;
+
+                setFeedStates(prev => ({ ...prev, [num]: false }));
+
+                const foodId = `food-${num}`;
+                if (foodsLogic.current[foodId]) {
+                    delete foodsLogic.current[foodId];
+                    setFoodsState(prev => prev.filter(f => f.id !== foodId));
+                }
+                if (fishesLogic.current[num] && fishesLogic.current[num].state === 'seek') {
+                    fishesLogic.current[num].state = 'wander';
+                    fishesLogic.current[num].tx = Math.random() * 80 + 10;
+                    fishesLogic.current[num].ty = Math.random() * 70 + 15;
+                }
+
+                setFishStats(prev => {
+                    const todayStr = getTodayStr(adjustedNow);
+                    const stat = prev[num];
+                    if (!stat) return prev;
+
+                    let newStreak = stat.streak;
+                    let newLastFed = stat.lastFed;
+                    let newLastFedTimestamp = stat.lastFedTimestamp;
+
+                    if (stat.lastFed === todayStr) {
+                        newStreak = Math.max(0, stat.streak - 1);
+                        const yesterday = new Date(adjustedNow);
+                        yesterday.setDate(yesterday.getDate() - 1);
+                        newLastFed = newStreak > 0 ? getTodayStr(yesterday) : '';
+                        newLastFedTimestamp = 0; 
+                    }
+                    return { ...prev, [num]: { ...stat, streak: newStreak, lastFed: newLastFed, lastFedTimestamp: newLastFedTimestamp } };
+                });
+            };
+
+            // --- 請假設定切換 ---
+            const handleToggleLeave = (num) => {
+                const todayStr = getTodayStr(adjustedNow);
+                setFishStats(prev => {
+                    const stat = prev[num] || { type: FISH_ICONS[num%FISH_ICONS.length], streak: 0, lastFed: '', lastFedTimestamp: 0, leaveDates: [] };
+                    const leaveDates = stat.leaveDates || [];
+                    let newLeaveDates;
+                    
+                    if (leaveDates.includes(todayStr)) {
+                        newLeaveDates = leaveDates.filter(d => d !== todayStr); // 取消請假
+                    } else {
+                        newLeaveDates = [...leaveDates, todayStr]; // 設為請假
+                    }
+                    return { ...prev, [num]: { ...stat, leaveDates: newLeaveDates } };
+                });
+            };
+
+            const currentSlot = useMemo(() => {
+                if (schedule.length === 0) return null;
+                const currentMs = adjustedNow.getHours() * 3600000 + adjustedNow.getMinutes() * 60000 + adjustedNow.getSeconds() * 1000;
+                for (let slot of schedule) {
+                    const [sh, sm] = slot.start.split(':').map(Number);
+                    const startMs = sh * 3600000 + sm * 60000;
+                    const [eh, em] = slot.end.split(':').map(Number);
+                    const endMs = eh * 3600000 + em * 60000;
+                    if (currentMs >= startMs && currentMs < endMs) {
+                        return { ...slot, startMs, endMs, durationMs: endMs - startMs, progressMs: currentMs - startMs };
+                    }
+                }
+                return null;
+            }, [adjustedNow, schedule]);
+
+            useEffect(() => {
+                if (!currentSlot) { setActiveSlotId(null); return; }
+                if (currentSlot.id !== activeSlotId) {
+                    setActiveSlotId(currentSlot.id);
+                    if (itemRefs.current[currentSlot.id]) {
+                        itemRefs.current[currentSlot.id].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                    }
+                    const isJustStarted = currentSlot.progressMs < 90000;
+                    if (currentSlot.type === 'brushing' || currentSlot.label.includes('潔牙')) {
+                        if (isJustStarted && countDownMode === 'idle') {
+                            const isTuesday = effectiveDay === 2;
+                            setCountDownLabel(isTuesday ? "潔牙 + 含氟漱口水" : "潔牙時間");
+                            startCountdownSequence(300);
+                        }
+                    } else if (currentSlot.type === 'class') {
+                        if (isJustStarted && countDownMode === 'idle') {
+                            setCountDownLabel("上課準備");
+                            startCountdownSequence(60);
+                        }
+                    }
+                }
+            }, [currentSlot, activeSlotId, countDownMode, effectiveDay]);
+
+            const startCountdownSequence = (seconds) => {
+                setCountDownMode('counting');
+                setCountDownSeconds(seconds);
+            };
+
+            useEffect(() => {
+                let interval;
+                if (countDownMode === 'counting' && countDownSeconds > 0) {
+                    interval = setInterval(() => setCountDownSeconds(p => p - 1), 1000);
+                } else if (countDownMode === 'counting' && countDownSeconds <= 0) {
+                    setCountDownMode('ringing');
+                    playBeep(3000);
+                    setTimeout(() => setCountDownMode('finished'), 3000);
+                    setTimeout(() => setCountDownMode('idle'), 6000);
+                }
+                return () => clearInterval(interval);
+            }, [countDownMode, countDownSeconds]);
+
+            const statusStyle = useMemo(() => {
+                if (!currentSlot) return { bg: 'bg-slate-100', text: 'text-slate-500', label: '下課 / 待機', subLabel: '-- : --' };
+                const subLabel = `${currentSlot.start} ~ ${currentSlot.end}`;
+                let label = `${currentSlot.label}`;
+                let bg = 'bg-blue-50', text = 'text-blue-700';
+                
+                if (currentSlot.type === 'class') {
+                    if ((currentSlot.durationMs - currentSlot.progressMs) < 600000) {
+                         bg = 'bg-orange-50'; text = 'text-orange-700';
+                    } else {
+                        bg = 'bg-red-50'; text = 'text-red-700';
+                    }
+                } else if (currentSlot.type === 'brushing') {
+                     bg = 'bg-purple-50'; text = 'text-purple-700';
+                } else if (currentSlot.type === 'lunch' || currentSlot.label.includes("午")) {
+                     bg = 'bg-yellow-50'; text = 'text-yellow-700';
+                } else if (currentSlot.type === 'clean') {
+                     bg = 'bg-emerald-50'; text = 'text-emerald-700';
+                } else {
+                     bg = 'bg-green-50'; text = 'text-green-700';
+                }
+                if (currentSlot.id === 'weekend') {
+                    bg = 'bg-indigo-50'; text = 'text-indigo-700';
+                }
+                return { bg, text, label, subLabel };
+            }, [currentSlot]);
+
+            const currentMessage = useMemo(() => {
+                let category = 'break'; 
+                if (currentSlot) {
+                    if (currentSlot.type === 'lunch' || currentSlot.label.includes('餐')) category = 'lunch';
+                    else if (currentSlot.type === 'clean' || currentSlot.label.includes('掃')) category = 'clean';
+                    else if (currentSlot.type === 'brushing' || currentSlot.label.includes('潔牙')) category = 'brushing';
+                    else if (currentSlot.type === 'nap') category = 'nap';
+                    else if (currentSlot.type === 'class') category = 'class';
+                }
+                const messages = reminders[category] || reminders['break'];
+                const idx = Math.floor(adjustedNow.getTime() / 6000) % messages.length;
+                return messages[idx] || "歡迎使用班級看板";
+            }, [adjustedNow, currentSlot, reminders]);
+
+            // --- 點擊投餵飼料 ---
+            const handleFeedClick = (num) => {
+                if (feedStates[num]) return; 
+
+                setFeedStates(prev => ({ ...prev, [num]: true }));
+                
+                const newFoodId = `food-${num}`;
+                const startX = Math.random() * 80 + 10; 
+                
+                // 取得當天的節慶特餐，若無則為 null (使用一般圓形飼料)
+                const specialFood = getHolidayFood(adjustedNow);
+                
+                foodsLogic.current[newFoodId] = { 
+                    id: newFoodId, 
+                    startX: startX, 
+                    x: startX, 
+                    y: -5, 
+                    fishId: num, 
+                    swayTime: 0,
+                    icon: specialFood
+                };
+                
+                setFoodsState(prev => [...prev, { id: newFoodId, icon: specialFood }]);
+
+                if (fishesLogic.current[num]) {
+                    fishesLogic.current[num].state = 'seek';
+                    fishesLogic.current[num].targetFoodId = newFoodId;
+                }
+            };
+
+            const seatNumbers = Array.from({ length: 26 }, (_, i) => i + 1);
+            
+            // 計算今日完成人數與請假人數
+            const todayStr = getTodayStr(adjustedNow);
+            let completedCount = 0;
+            let leaveCount = 0;
+            
+            seatNumbers.forEach(num => {
+                const stat = fishStats[num] || {};
+                const isLeaveToday = stat.leaveDates && stat.leaveDates.includes(todayStr);
+                
+                if (isLeaveToday) {
+                    leaveCount++;
+                } else if (feedStates[num]) {
+                    completedCount++;
+                }
+            });
+
+            // 判斷今日特餐與顯示標題
+            const currentFoodIcon = getHolidayFood(adjustedNow);
+            const feedTitle = currentFoodIcon ? `🐾 作業完成確認 (今日特餐：${currentFoodIcon})` : `🐾 作業完成確認 (點擊座號餵魚)`;
+
+            return (
+                <div className="flex flex-col min-h-screen lg:h-screen w-full relative bg-gradient-to-br from-slate-100 to-blue-50 text-slate-800 lg:overflow-hidden overflow-x-hidden">
+                    
+                    {/* 背景裝飾 */}
+                    <div className="absolute top-[-10%] left-[-10%] w-[80vw] h-[80vw] lg:w-[40vw] lg:h-[40vw] bg-blue-200 rounded-full mix-blend-multiply filter blur-3xl opacity-30 bg-float"></div>
+                    <div className="absolute bottom-[-10%] right-[-10%] w-[80vw] h-[80vw] lg:w-[40vw] lg:h-[40vw] bg-pink-200 rounded-full mix-blend-multiply filter blur-3xl opacity-30 bg-float" style={{animationDelay: '1s'}}></div>
+
+                    {/* 倒數 Modal */}
+                    {countDownMode !== 'idle' && (
+                        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-sm">
+                            <div className="flex flex-col items-center justify-center text-white w-full">
+                                {countDownMode === 'counting' && (
+                                    <>
+                                        <div className="text-[8vw] md:text-[6vw] lg:text-[4vw] font-bold mb-2 lg:mb-4 text-yellow-400 tracking-wider">{countDownLabel}</div>
+                                        <div className="text-[35vw] md:text-[25vw] lg:text-[20vw] leading-none font-black text-white tabular-nums drop-shadow-[0_0_30px_rgba(255,255,255,0.5)]">
+                                            {formatCountDown(countDownSeconds)}
+                                        </div>
+                                    </>
+                                )}
+                                {(countDownMode === 'ringing' || countDownMode === 'finished') && (
+                                    <div className="text-[25vw] md:text-[15vw] lg:text-[10vw] font-bold text-red-500 animate-pulse drop-shadow-[0_0_50px_rgba(239,68,68,0.8)]">時間到</div>
+                                )}
+                                <button onClick={() => setCountDownMode('idle')} className="mt-8 lg:mt-12 px-8 lg:px-12 py-3 lg:py-4 text-xl lg:text-2xl bg-white/20 hover:bg-white/30 rounded-full text-white border border-white/50 transition backdrop-blur-md">
+                                    關閉提醒
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* 設定視窗 */}
+                    {isSettingsOpen && (
+                        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl h-[90vh] flex flex-col overflow-hidden animate-[fadeIn_0.3s_ease-out]">
+                                <div className="p-3 lg:p-4 border-b flex justify-between items-center bg-slate-50">
+                                    <div className="flex flex-wrap gap-1 lg:gap-2 p-1 bg-slate-200 rounded-lg">
+                                        <button onClick={()=>setSettingsTab('schedule')} className={`px-3 py-1.5 lg:px-4 lg:py-2 rounded-md font-bold transition text-sm lg:text-base ${settingsTab==='schedule'?'bg-white shadow text-blue-600':'text-slate-500 hover:text-slate-700'}`}>作息表</button>
+                                        <button onClick={()=>setSettingsTab('reminders')} className={`px-3 py-1.5 lg:px-4 lg:py-2 rounded-md font-bold transition text-sm lg:text-base ${settingsTab==='reminders'?'bg-white shadow text-orange-600':'text-slate-500 hover:text-slate-700'}`}>小叮嚀</button>
+                                        <button onClick={()=>setSettingsTab('fish')} className={`px-3 py-1.5 lg:px-4 lg:py-2 rounded-md font-bold transition text-sm lg:text-base ${settingsTab==='fish'?'bg-white shadow text-teal-600':'text-slate-500 hover:text-slate-700'}`}>🐠 魚群設定</button>
+                                        <button onClick={()=>setSettingsTab('clock')} className={`px-3 py-1.5 lg:px-4 lg:py-2 rounded-md font-bold transition text-sm lg:text-base ${settingsTab==='clock'?'bg-white shadow text-purple-600':'text-slate-500 hover:text-slate-700'}`}>⏱️ 校時</button>
+                                    </div>
+                                    <button onClick={() => setIsSettingsOpen(false)} className="w-8 h-8 lg:w-10 lg:h-10 rounded-full hover:bg-red-100 hover:text-red-500 flex items-center justify-center text-xl lg:text-2xl transition">✕</button>
+                                </div>
+                                <div className="flex-1 overflow-auto p-4 lg:p-6 custom-scrollbar text-base lg:text-lg">
+                                    {settingsTab === 'schedule' ? (
+                                        <div className="space-y-4">
+                                            <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-blue-50 p-3 lg:p-4 rounded-lg border border-blue-100 gap-3">
+                                                 <span className="text-blue-800 font-bold text-sm lg:text-base">💡 修改後即時更新。</span>
+                                                 {/* 星期模擬器 */}
+                                                 <div className="flex items-center gap-2">
+                                                     <label className="text-xs lg:text-sm text-slate-600 font-bold w-max">📅 模擬星期：</label>
+                                                     <select value={simulatedDay} onChange={(e) => setSimulatedDay(e.target.value)} className="bg-white border rounded px-2 py-1 text-xs lg:text-sm font-bold text-slate-700 focus:ring-2 focus:ring-blue-300 outline-none">
+                                                         <option value="auto">自動偵測 (今日)</option>
+                                                         <option value="1">週一 (Mon)</option>
+                                                         <option value="2">週二 (Tue)</option>
+                                                         <option value="3">週三 (Wed)</option>
+                                                         <option value="4">週四 (Thu)</option>
+                                                         <option value="5">週五 (Fri)</option>
+                                                         <option value="6">週六 (Sat)</option>
+                                                         <option value="0">週日 (Sun)</option>
+                                                     </select>
+                                                     <button onClick={()=>{if(confirm('恢復預設？')) setSchedule(getDailySchedule(effectiveDay))}} className="ml-2 text-xs lg:text-sm bg-blue-600 text-white px-3 py-1 lg:px-4 lg:py-2 rounded hover:bg-blue-700 transition shrink-0">恢復預設</button>
+                                                 </div>
+                                            </div>
+                                            {schedule.map((item, index) => (
+                                                <div key={item.id} className="flex flex-wrap lg:flex-nowrap gap-2 lg:gap-3 items-center bg-slate-50 p-2 lg:p-3 rounded border hover:border-blue-300 transition">
+                                                    <select value={item.type} onChange={(e)=>{const n=[...schedule];n[index].type=e.target.value;setSchedule(n)}} className="border rounded p-1 lg:p-2 bg-white w-[48%] lg:w-28 text-sm lg:text-lg">
+                                                        <option value="class">🔴上課</option><option value="break">🔵下課</option><option value="lunch">🍱午餐</option><option value="clean">🧹打掃</option><option value="brushing">🦷潔牙</option><option value="nap">😴午休</option><option value="leave">🎒放學</option><option value="study">📖自修</option>
+                                                    </select>
+                                                    <div className="flex w-[48%] lg:w-auto items-center gap-1">
+                                                        <input type="time" value={item.start} onChange={(e)=>{const n=[...schedule];n[index].start=e.target.value;setSchedule(n)}} className="border rounded p-1 lg:p-2 text-center w-full lg:w-32 bg-white text-sm lg:text-lg" />
+                                                        <span className="text-gray-400 hidden lg:inline">➜</span>
+                                                    </div>
+                                                    <div className="flex w-[85%] lg:w-auto items-center gap-2">
+                                                        <span className="text-gray-400 lg:hidden">➜</span>
+                                                        <input type="time" value={item.end} onChange={(e)=>{const n=[...schedule];n[index].end=e.target.value;setSchedule(n)}} className="border rounded p-1 lg:p-2 text-center w-[48%] lg:w-32 bg-white text-sm lg:text-lg" />
+                                                        <input type="text" value={item.label} onChange={(e)=>{const n=[...schedule];n[index].label=e.target.value;setSchedule(n)}} className="border rounded p-1 lg:p-2 flex-1 bg-white text-sm lg:text-lg" placeholder="事項名稱" />
+                                                    </div>
+                                                    <button onClick={()=>{if(confirm('刪除？'))setSchedule(schedule.filter((_,i)=>i!==index))}} className="p-1 lg:p-2 text-red-400 hover:bg-red-50 rounded text-lg lg:text-xl w-[10%] lg:w-auto flex justify-center">🗑️</button>
+                                                </div>
+                                            ))}
+                                            <button onClick={() => setSchedule([...schedule, {id:Date.now(), type:'class', start:'16:00', end:'16:40', label:'新事項'}])} className="w-full py-3 lg:py-4 border-2 border-dashed border-slate-300 text-slate-500 rounded-lg hover:bg-slate-50 hover:border-blue-400 hover:text-blue-500 transition font-bold text-base lg:text-xl">+ 新增時段</button>
+                                        </div>
+                                    ) : settingsTab === 'reminders' ? (
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-base lg:text-lg">
+                                            {Object.entries(reminders).map(([key, lines]) => (
+                                                <div key={key} className="p-3 lg:p-4 rounded-xl border bg-white shadow-sm">
+                                                    <div className="font-bold mb-2 capitalize text-slate-700 border-b pb-1 text-lg lg:text-xl">{key === 'class' ? '上課' : key === 'break' ? '下課' : key === 'lunch' ? '午餐' : key === 'clean' ? '打掃' : key === 'brushing' ? '潔牙' : '午休'}</div>
+                                                    <textarea className="w-full h-32 lg:h-40 p-2 lg:p-3 text-sm lg:text-base border rounded bg-slate-50 focus:ring-2 focus:ring-blue-200 outline-none resize-none leading-relaxed" value={lines.join('\n')} onChange={(e)=>{setReminders({...reminders, [key]: e.target.value.split('\n')})}}></textarea>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : settingsTab === 'fish' ? (
+                                        <div className="space-y-4">
+                                            <div className="bg-teal-50 p-4 rounded-lg border border-teal-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                                                <div>
+                                                    <div className="text-teal-800 font-bold text-lg">🐟 專屬魚種與狀態設定</div>
+                                                    <div className="text-teal-600 text-sm">每連續餵食 5 天長大一階！中斷會重置天數。</div>
+                                                </div>
+                                                <button onClick={()=>{
+                                                    if(confirm('確定要將全班的魚重置為初始狀態嗎？\n(包含連續餵食天數歸零、魚種恢復為預設的 🐠)')) {
+                                                        setFishStats(prev => {
+                                                            let n = {...prev};
+                                                            for(let i=1; i<=26; i++) {
+                                                                if(n[i]) {
+                                                                    n[i].streak = 0;
+                                                                    n[i].type = FISH_ICONS[0]; // 恢復為第一種魚
+                                                                }
+                                                            }
+                                                            return n;
+                                                        });
+                                                    }
+                                                }} className="bg-white border border-teal-300 text-teal-600 hover:bg-teal-100 px-3 py-1.5 rounded shadow-sm text-sm font-bold transition shrink-0">重置初始狀態</button>
+                                            </div>
+                                            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+                                                {seatNumbers.map(num => {
+                                                    const stat = fishStats[num] || { type:'🐠', streak:0, leaveDates:[] };
+                                                    const isFedToday = feedStates[num];
+                                                    const isLeaveToday = stat.leaveDates && stat.leaveDates.includes(todayStr);
+
+                                                    return (
+                                                        <div key={num} className="bg-slate-50 border p-3 rounded-lg flex flex-col items-center gap-1.5 hover:border-teal-300 transition relative">
+                                                            <div className="font-bold text-slate-500 w-full text-left">{num}</div>
+                                                            <select 
+                                                                value={stat.type} 
+                                                                onChange={(e) => setFishStats(prev => ({...prev, [num]: {...prev[num], type: e.target.value}}))}
+                                                                className="text-4xl bg-transparent outline-none cursor-pointer hover:scale-110 transition"
+                                                            >
+                                                                {FISH_ICONS.map(icon => <option key={icon} value={icon}>{icon}</option>)}
+                                                            </select>
+                                                            <div className="text-[10px] font-bold text-slate-400 bg-white px-2 py-0.5 rounded-full border">
+                                                                連擊: {stat.streak} 天
+                                                            </div>
+                                                            
+                                                            {/* 控制按鈕區 (撤銷/請假) */}
+                                                            <div className="flex flex-col gap-1 mt-1 w-full">
+                                                                {isFedToday ? (
+                                                                    <button 
+                                                                        onClick={() => handleUndoFeed(num)}
+                                                                        className="w-full bg-red-100 hover:bg-red-200 text-red-600 border border-red-200 text-[10px] sm:text-xs font-bold py-1 rounded transition"
+                                                                    >
+                                                                        撤銷餵食
+                                                                    </button>
+                                                                ) : (
+                                                                    <button 
+                                                                        onClick={() => handleToggleLeave(num)}
+                                                                        className={`w-full border text-[10px] sm:text-xs font-bold py-1 rounded transition ${isLeaveToday ? 'bg-slate-600 text-white border-slate-700' : 'bg-slate-200 text-slate-600 hover:bg-slate-300'}`}
+                                                                    >
+                                                                        {isLeaveToday ? '取消請假' : '設為請假'}
+                                                                    </button>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    )
+                                                })}
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="flex flex-col items-center justify-center space-y-6 lg:space-y-8 py-4 lg:py-8">
+                                            <div className="text-center">
+                                                <div className="text-slate-500 text-base lg:text-lg font-bold mb-2">目前顯示時間 (已調整)</div>
+                                                <div className="text-4xl md:text-5xl lg:text-6xl font-black text-slate-700 font-mono tracking-wider bg-slate-100 px-6 lg:px-8 py-3 lg:py-4 rounded-xl shadow-inner">
+                                                    {formatTime(adjustedNow)}
+                                                </div>
+                                            </div>
+                                            
+                                            <div className="bg-purple-50 p-4 lg:p-6 rounded-2xl border border-purple-100 w-full max-w-lg">
+                                                <div className="text-center font-bold text-purple-800 mb-3 lg:mb-4">手動微調</div>
+                                                <div className="grid grid-cols-2 gap-3 lg:gap-4">
+                                                    <div className="flex flex-col gap-2">
+                                                        <button onClick={() => setOffset(o => o + 1000)} className="bg-white border hover:bg-purple-100 text-purple-700 font-bold py-2 lg:py-3 rounded-lg shadow-sm active:scale-95 transition">＋ 1 秒</button>
+                                                        <button onClick={() => setOffset(o => o - 1000)} className="bg-white border hover:bg-purple-100 text-purple-700 font-bold py-2 lg:py-3 rounded-lg shadow-sm active:scale-95 transition">－ 1 秒</button>
+                                                    </div>
+                                                    <div className="flex flex-col gap-2">
+                                                        <button onClick={() => setOffset(o => o + 60000)} className="bg-white border hover:bg-purple-100 text-purple-700 font-bold py-2 lg:py-3 rounded-lg shadow-sm active:scale-95 transition">＋ 1 分</button>
+                                                        <button onClick={() => setOffset(o => o - 60000)} className="bg-white border hover:bg-purple-100 text-purple-700 font-bold py-2 lg:py-3 rounded-lg shadow-sm active:scale-95 transition">－ 1 分</button>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            <div className="w-full max-w-lg border-t pt-4 lg:pt-6">
+                                                <button onClick={() => { if(confirm('確定要重置時間，回到網路標準時間嗎？')) setOffset(0); }} className="w-full py-3 bg-slate-200 hover:bg-slate-300 text-slate-600 font-bold rounded-lg transition text-sm lg:text-base">
+                                                    ↺ 重置為標準時間
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* --- 自適應頭部 Header --- */}
+                    <header className="flex flex-col lg:flex-row lg:h-[15vh] min-h-min lg:min-h-[120px] px-3 sm:px-4 lg:px-6 gap-3 sm:gap-4 lg:gap-6 relative z-10 pt-3 lg:pt-4 pb-1 shrink-0">
+                        {/* 左：時間 */}
+                        <div className="glass-panel w-full lg:w-[25%] p-4 lg:p-0 xl:px-8 rounded-2xl flex flex-row lg:flex-col xl:flex-row items-center justify-between lg:justify-center xl:justify-between relative group transition-all hover:scale-[1.01]">
+                             <div className="flex flex-col justify-center w-full">
+                                <div className="text-5xl sm:text-7xl lg:text-5xl xl:text-7xl 2xl:text-8xl font-black text-slate-700 tabular-nums leading-none tracking-tight -ml-1">
+                                    {formatTime(adjustedNow).split(':').slice(0,2).join(':')}
+                                    <span className="text-2xl sm:text-4xl lg:text-3xl xl:text-4xl text-slate-400 font-medium ml-1 inline-block translate-y-[-0.5rem] lg:translate-y-[-1rem]">
+                                        {formatTime(adjustedNow).split(':')[2]}
+                                    </span>
+                                </div>
+                                <div className="text-xs sm:text-sm lg:text-xs xl:text-sm font-bold text-slate-500 uppercase tracking-widest mt-1 lg:text-center xl:text-right w-full pr-2 flex justify-start lg:justify-center xl:justify-end gap-2 items-center">
+                                    {simulatedDay !== 'auto' && <span className="text-[10px] sm:text-xs bg-amber-200 text-amber-800 px-1 rounded">模擬中</span>}
+                                    <span>{now.getFullYear()}/{now.getMonth()+1}/{now.getDate()}</span>
+                                </div>
+                             </div>
+                             <button onClick={() => setIsSettingsOpen(true)} className="w-10 h-10 lg:w-12 lg:h-12 rounded-full hover:bg-slate-100 text-slate-300 hover:text-slate-600 transition flex items-center justify-center absolute top-2 right-2 text-xl lg:text-2xl">⚙️</button>
+                        </div>
+
+                        {/* 中：主狀態列 */}
+                        <div className={`flex-1 w-full py-4 lg:py-0 rounded-2xl flex flex-col items-center justify-center shadow-lg transition-colors duration-700 relative overflow-hidden ${statusStyle.bg}`}>
+                            <div className="relative z-10 flex flex-col items-center">
+                                <div className={`text-4xl sm:text-5xl md:text-6xl lg:text-5xl xl:text-6xl 2xl:text-7xl font-black ${statusStyle.text} tracking-wide text-center`}>{statusStyle.label}</div>
+                                <div className={`text-xl sm:text-2xl lg:text-xl xl:text-3xl font-bold mt-1 md:mt-2 opacity-80 ${statusStyle.text}`}>{statusStyle.subLabel}</div>
+                            </div>
+                        </div>
+
+                        {/* 右：天氣 */}
+                        <div className="glass-panel w-full lg:w-[20%] p-3 sm:p-4 rounded-2xl flex flex-row lg:flex-col xl:flex-row items-center justify-center relative gap-4">
+                             {weather.loading ? <div className="animate-pulse text-slate-400 text-base lg:text-xl">載入中...</div> : (
+                                 <>
+                                     <div className="text-5xl sm:text-6xl lg:text-5xl xl:text-6xl 2xl:text-7xl drop-shadow-md">{weather.code>=0?(['☀️','🌤️','☁️','🌫️'][Math.min(3,weather.code)]||'🌧️'):'--'}</div>
+                                     <div className="flex flex-col text-left lg:text-center xl:text-left">
+                                         <div className="text-4xl sm:text-5xl lg:text-4xl xl:text-5xl 2xl:text-6xl font-bold text-slate-700 tabular-nums leading-none">{weather.temp}°</div>
+                                         <div className="text-sm sm:text-base lg:text-sm xl:text-xl font-medium text-slate-500 mt-1">新竹市</div>
+                                     </div>
+                                 </>
+                             )}
+                        </div>
+                    </header>
+
+                    {/* --- 自適應主內容區 Main --- */}
+                    <main className="flex-1 flex flex-col lg:flex-row px-3 sm:px-4 lg:px-6 pb-4 sm:pb-6 lg:pb-6 gap-3 sm:gap-4 lg:gap-6 mt-2 overflow-y-auto lg:overflow-hidden w-full custom-scrollbar">
+                        
+                        {/* 左：課表 */}
+                        <div className="w-full lg:w-[25%] h-[40vh] min-h-[300px] lg:h-full lg:min-h-0 shrink-0 lg:shrink glass-panel rounded-2xl flex flex-col overflow-hidden shadow-xl" style={{overscrollBehavior: 'contain'}}>
+                            <div className="p-3 lg:p-4 bg-slate-100/50 border-b border-white/50 text-center font-bold text-slate-600 text-base lg:text-xl flex items-center justify-center gap-2">
+                                📅 今日流程 
+                                {simulatedDay !== 'auto' && <span className="text-xs bg-amber-200 text-amber-800 px-1 rounded">週{['日','一','二','三','四','五','六'][effectiveDay]}</span>}
+                            </div>
+                            <div className="flex-1 overflow-y-auto custom-scrollbar p-2 sm:p-3 space-y-2 sm:space-y-3">
+                                {schedule.map((slot) => {
+                                    const isCurrent = currentSlot && currentSlot.id === slot.id;
+                                    return (
+                                        <div 
+                                            key={slot.id} 
+                                            ref={el => itemRefs.current[slot.id] = el} 
+                                            className={`
+                                                flex items-center p-2 sm:p-3 rounded-xl transition-all duration-500 border
+                                                ${isCurrent 
+                                                    ? 'active-glow bg-gradient-to-r from-blue-500 to-blue-400 text-white shadow-lg' 
+                                                    : 'bg-white/60 border-transparent hover:bg-white text-slate-600 hover:shadow-sm'}
+                                                ${slot.type === 'break' && !isCurrent ? 'opacity-75 grayscale-[0.5]' : ''}
+                                            `}
+                                        >
+                                            <div className="w-12 sm:w-16 text-center font-medium text-[10px] sm:text-sm lg:text-base leading-tight opacity-90 flex flex-col gap-0.5">
+                                                <span>{slot.start}</span>
+                                                <span className="w-full h-px bg-current opacity-30"></span>
+                                                <span>{slot.end}</span>
+                                            </div>
+                                            <div className="flex-1 pl-2 sm:pl-4 border-l border-current border-opacity-20 ml-1 sm:ml-2">
+                                                <div className={`font-bold ${isCurrent ? 'text-lg sm:text-xl lg:text-2xl' : 'text-sm sm:text-lg lg:text-xl'}`}>{slot.label}</div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        {/* 中：黑板聯絡簿 + 餵食按鈕 */}
+                        <div className="w-full lg:w-[40%] flex flex-col gap-3 sm:gap-4 h-auto min-h-[500px] lg:h-full lg:min-h-0 shrink-0 lg:shrink">
+                            {/* 跑馬燈小叮嚀 */}
+                            <div className="bg-amber-100 rounded-2xl border-2 border-amber-200 p-3 sm:p-4 shadow-md flex items-center gap-3 sm:gap-4 overflow-hidden shrink-0">
+                                <div className="bg-amber-500 text-white text-sm sm:text-base px-2 sm:px-3 py-1 rounded font-bold shrink-0">提醒</div>
+                                <div key={currentMessage} className="text-amber-900 font-bold text-sm sm:text-lg lg:text-2xl animate-[fadeIn_0.5s_ease-out] truncate">{currentMessage}</div>
+                            </div>
+                            
+                            {/* 聯絡簿與按鈕區域整合 */}
+                            <div className="flex-1 rounded-2xl p-4 sm:p-5 lg:p-6 chalkboard border-[8px] sm:border-[12px] border-[#5d4037] shadow-2xl relative flex flex-col min-h-[400px]">
+                                {/* 標題區 */}
+                                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end border-b border-white/20 pb-2 sm:pb-3 mb-2 sm:mb-3 gap-2 shrink-0">
+                                    <div className="flex items-baseline gap-2 sm:gap-4">
+                                        <h2 className="text-xl sm:text-2xl lg:text-3xl text-white/90 chalk-font tracking-widest">📋 聯絡事項</h2>
+                                        <div className="text-sm sm:text-lg lg:text-xl text-white/70 chalk-font font-sans">
+                                            {now.getFullYear()}/{now.getMonth()+1}/{now.getDate()} (週{['日','一','二','三','四','五','六'][effectiveDay]})
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="flex items-center gap-2 self-end sm:self-auto">
+                                        <button onClick={() => setContactFontSize(s => Math.max(16, s - 4))} className="text-white/70 hover:text-white border border-white/30 hover:border-white/80 rounded px-2 py-0.5 text-xs sm:text-sm transition font-sans font-bold" title="縮小字體">A-</button>
+                                        <button onClick={() => setContactFontSize(s => Math.min(100, s + 4))} className="text-white/70 hover:text-white border border-white/30 hover:border-white/80 rounded px-2 py-0.5 text-xs sm:text-sm transition font-sans font-bold" title="放大字體">A+</button>
+                                    </div>
+                                </div>
+
+                                {/* 文字輸入區 */}
+                                <textarea 
+                                    className="w-full flex-1 bg-transparent resize-none outline-none leading-relaxed chalk-font text-white placeholder-white/30 custom-scrollbar mb-2" 
+                                    style={{ fontSize: `${contactFontSize}px` }}
+                                    placeholder="老師在此輸入聯絡事項..." 
+                                    value={contactBookContent} 
+                                    onChange={(e) => setContactBookContent(e.target.value)}
+                                ></textarea>
+                                
+                                {/* 餵食按鈕 */}
+                                <div className="mt-auto pt-3 border-t border-white/20 shrink-0">
+                                    <div className="text-white/80 text-xs sm:text-sm font-bold mb-2 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-1">
+                                        <span>{feedTitle}</span>
+                                        <span className="text-green-300 text-[10px] sm:text-xs">綠色:未完成 | 灰色:已完成 | 藍灰:請假</span>
+                                    </div>
+                                    <div className="grid grid-cols-7 sm:grid-cols-13 lg:grid-cols-9 xl:grid-cols-13 gap-1 sm:gap-1.5">
+                                        {seatNumbers.map(num => {
+                                            const isFed = feedStates[num];
+                                            const stat = fishStats[num] || {};
+                                            const isLeaveToday = stat.leaveDates && stat.leaveDates.includes(todayStr);
+
+                                            let btnClass = "";
+                                            let btnContent = "";
+                                            let btnDisabled = false;
+                                            let btnTitle = "";
+
+                                            if (isLeaveToday) {
+                                                btnClass = "bg-slate-400 text-slate-100 cursor-not-allowed opacity-50";
+                                                btnContent = "💤";
+                                                btnDisabled = true;
+                                                btnTitle = `座號 ${num} 今日請假`;
+                                            } else if (isFed) {
+                                                btnClass = "bg-white/10 text-white/30 cursor-not-allowed";
+                                                btnContent = "✓";
+                                                btnDisabled = true;
+                                                btnTitle = `座號 ${num} 已餵食`;
+                                            } else {
+                                                btnClass = "bg-green-500/90 hover:bg-green-400 text-white shadow-md active:scale-95 cursor-pointer";
+                                                btnContent = num;
+                                                btnDisabled = false;
+                                                btnTitle = `座號 ${num} 點擊餵食`;
+                                            }
+
+                                            return (
+                                                <button
+                                                    key={num}
+                                                    onClick={() => handleFeedClick(num)}
+                                                    disabled={btnDisabled}
+                                                    className={`
+                                                        aspect-square sm:aspect-auto sm:py-1 rounded text-xs sm:text-sm font-bold transition flex items-center justify-center ${btnClass}
+                                                    `}
+                                                    title={btnTitle}
+                                                >
+                                                    {btnContent}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* 右：全新專屬座號水族箱 */}
+                        <div className="w-full lg:w-[35%] rounded-2xl flex flex-col overflow-hidden shadow-xl relative min-h-[40vh] lg:h-full shrink-0 lg:shrink mb-6 lg:mb-0 border border-blue-300">
+                            {/* 水族箱頂部標題 */}
+                            <div className="bg-gradient-to-r from-blue-700 to-cyan-600 p-2 sm:p-3 text-white text-center font-bold text-sm sm:text-lg shadow-md z-20 flex justify-between items-center px-4 shrink-0">
+                                <span>🌊 班級專屬水族箱 (每連續 5 天長大一階！)</span>
+                                <span className="bg-black/20 px-2 py-0.5 rounded-full text-xs sm:text-sm border border-white/20">今日已餵食: {completedCount}/{26 - leaveCount}</span>
+                            </div>
+                            
+                            {/* 水族箱本體 */}
+                            <div className="flex-1 relative overflow-hidden bg-gradient-to-b from-cyan-300 via-blue-500 to-blue-900">
+                                {/* 光線折射裝飾 */}
+                                <div className="absolute top-0 left-0 w-full h-32 bg-gradient-to-b from-white/30 to-transparent pointer-events-none z-10"></div>
+                                
+                                {/* 氣泡動畫 */}
+                                {AQUARIUM_BUBBLES.map(bubble => (
+                                    <div 
+                                        key={`bubble-${bubble.id}`} 
+                                        className="animate-bubble"
+                                        style={{
+                                            left: bubble.left,
+                                            width: bubble.size,
+                                            height: bubble.size,
+                                            animationDuration: bubble.duration,
+                                            animationDelay: bubble.delay
+                                        }}
+                                    ></div>
+                                ))}
+
+                                {/* 26隻專屬魚群動畫 */}
+                                {seatNumbers.map(num => {
+                                    const stat = fishStats[num] || { type: '🐠', streak: 0, lastFed: '', lastFedTimestamp: 0, leaveDates: [] };
+                                    const todayStr = getTodayStr(adjustedNow);
+                                    const hasEatenToday = stat.lastFed === todayStr;
+                                    const isLeaveToday = stat.leaveDates && stat.leaveDates.includes(todayStr);
+                                    
+                                    // 死亡與錯過天數判定 (排除有請假的日子)
+                                    const missedDays = schoolDays.filter(d => d > stat.lastFed && !(stat.leaveDates || []).includes(d)).length;
+                                    // 如果連續2天上課日未餵，且今天還沒被餵食，且今天沒有請假，判定為餓死
+                                    const isDead = missedDays >= 2 && !feedStates[num] && !isLeaveToday;
+                                    
+                                    const isSeeking = fishesLogic.current[num]?.state === 'seek';
+                                    
+                                    let emoji = '';
+                                    if (isDead) {
+                                        emoji = '🪦'; // 餓死了顯示墳墓
+                                    } else if (isLeaveToday) {
+                                        emoji = '💤'; // 請假顯示睡覺
+                                    } else if (hasEatenToday) {
+                                        const timeSinceFed = Date.now() - (stat.lastFedTimestamp || 0);
+                                        if (timeSinceFed < 10000) {
+                                            emoji = '❤️'; // 吃飽顯示愛心 10 秒
+                                        }
+                                    } else {
+                                        // 還活著但還沒吃
+                                        emoji = isSeeking ? '🤤' : '😵'; // 看到食物流口水，平時頭暈餓
+                                    }
+
+                                    // ★ 每 5 天成長一次，每次增加 12px 
+                                    const growthStage = Math.floor(stat.streak / 5);
+                                    const fishSize = Math.min(84, 24 + growthStage * 12);
+                                    
+                                    return (
+                                        <div 
+                                            key={`fish-${num}`} 
+                                            id={`fish-container-${num}`}
+                                            className="fish-container flex flex-col items-center justify-center filter drop-shadow-lg transition-all duration-500"
+                                            style={{ zIndex: 10 + (num % 5), opacity: isDead ? 0.7 : 0.95 }}
+                                        >
+                                            {/* 魚本體 */}
+                                            <div 
+                                                id={`fish-sprite-${num}`} 
+                                                className="fish-sprite leading-none"
+                                                style={{ fontSize: `${fishSize}px` }}
+                                            >
+                                                {stat.type}
+                                            </div>
+                                            
+                                            {/* 座號牌 */}
+                                            <div className={`
+                                                text-[10px] sm:text-xs font-bold px-1.5 py-0.5 rounded-full mt-1 border whitespace-nowrap shadow-sm backdrop-blur-sm transition-colors duration-500
+                                                ${isDead ? 'bg-gray-800/80 text-gray-300 border-gray-600' : isLeaveToday ? 'bg-slate-600/80 text-white/70 border-slate-500' : hasEatenToday ? 'bg-green-400/40 text-white border-green-300/40' : 'bg-black/20 text-white/70 border-white/10'}
+                                            `}>
+                                                {num} {emoji && <span>{emoji}</span>}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+
+                                {/* 掉落的飼料 / 特餐 */}
+                                {foodsState.map(food => (
+                                    <div 
+                                        key={food.id}
+                                        id={food.id}
+                                        className={`food-base z-20 ${!food.icon ? 'food-pellet' : 'text-2xl sm:text-3xl filter drop-shadow-md'}`}
+                                    >
+                                        {food.icon ? food.icon : null}
+                                    </div>
+                                ))}
+
+                                {/* 底部水草裝飾 */}
+                                <div className="absolute bottom-[-10px] left-0 w-full flex justify-between px-2 sm:px-4 text-3xl sm:text-5xl lg:text-6xl opacity-80 filter drop-shadow-md z-10 pointer-events-none">
+                                    <span>🌿</span>
+                                    <span className="translate-y-2 scale-110">🪴</span>
+                                    <span>🌿</span>
+                                    <span className="translate-y-4">🌿</span>
+                                    <span className="translate-y-1 scale-125">🪴</span>
+                                    <span>🌿</span>
+                                </div>
+                            </div>
+                        </div>
+
+                    </main>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
