@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>504 班級智慧看板 (節慶特餐版 v34)</title>
+    <title>504 班級智慧看板 (真實生態修復版 v40)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -70,17 +70,12 @@
             100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
         }
 
-        @keyframes bubble-rise {
-            0% { bottom: -5%; opacity: 0; transform: translateX(0) scale(0.5); }
-            20% { opacity: 0.6; }
-            50% { transform: translateX(15px) scale(1); }
-            100% { bottom: 100%; opacity: 0; transform: translateX(-15px) scale(1.2); }
-        }
-        .animate-bubble { 
+        .js-bubble {
             position: absolute; 
             border-radius: 50%; 
             background: radial-gradient(circle at 30% 30%, rgba(255,255,255,0.9), rgba(255,255,255,0.1));
-            animation: bubble-rise infinite ease-in; 
+            will-change: left, top;
+            transform: translate(-50%, -50%);
         }
 
         /* 魚類與食物的平滑過渡 */
@@ -94,7 +89,6 @@
             transition: transform 0.3s ease, filter 0.5s ease;
         }
 
-        /* 新增：食物共用屬性與一般飼料樣式 */
         .food-base {
             position: absolute;
             transition: left 0.1s linear, top 0.1s linear;
@@ -116,7 +110,7 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo, useRef, useCallback } = React;
 
-        // --- Helper: 日期格式化 YYYY-MM-DD ---
+        // --- Helper: 日期格式化 ---
         const getTodayStr = (d) => {
             return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
         };
@@ -124,15 +118,13 @@
         // --- 節慶特餐判斷邏輯 ---
         const getHolidayFood = (currentDate) => {
             const currentYear = currentDate.getFullYear();
-            // 將時間重置為當日凌晨，確保計算天數精準
             const today = new Date(currentYear, currentDate.getMonth(), currentDate.getDate());
 
-            // 節日設定 (月, 日, 專屬特餐) 
             const holidays = [
                 { month: 2, day: 14, icon: '🍫', name: '情人節' },
                 { month: 4, day: 4, icon: '🍔', name: '兒童節' },
-                { month: 6, day: 19, icon: '🥟', name: '端午節' }, // 2026 對應國曆
-                { month: 9, day: 25, icon: '🥮', name: '中秋節' }, // 2026 對應國曆
+                { month: 6, day: 19, icon: '🥟', name: '端午節' }, 
+                { month: 9, day: 25, icon: '🥮', name: '中秋節' }, 
                 { month: 9, day: 28, icon: '🍎', name: '教師節' },
                 { month: 10, day: 31, icon: '🍬', name: '萬聖節' },
                 { month: 12, day: 25, icon: '🍗', name: '聖誕節' },
@@ -144,12 +136,11 @@
                 const diffTime = hDate.getTime() - today.getTime();
                 const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
-                // 若在節慶前 7 天內 (包含當天)，顯示專屬大餐
                 if (diffDays >= 0 && diffDays <= 7) {
                     return holiday.icon;
                 }
             }
-            return null; // 非節慶期間回傳 null (使用一般飼料)
+            return null; 
         };
 
         // --- 設定與資料 ---
@@ -234,7 +225,30 @@
             nap: ["😴 趴下休息，保持安靜", "🔋 閉目養神，下午更有力", "🤫 動作放輕，不影響他人"]
         };
 
-        const FISH_ICONS = ['🐠', '🐟', '🐡', '🐢', '🦈', '🦐', '🦑', '🦀', '🐙', '🐬', '🐋', '🦞', '🦭', '🐧'];
+        // 限定小型水族生物
+        const FISH_ICONS = ['🐠', '🐟', '🐡', '🦐', '🦀', '🦞', '⭐', '🦑', '🐙'];
+
+        const NUM_BUBBLES = 25; // 氣泡數量
+
+        // --- ★ 針對特殊生物進行初始姿態校正 ---
+        const getFishInnerStyle = (icon) => {
+            switch(icon) {
+                case '🦀': 
+                case '🦑': 
+                case '🐙': 
+                    return { transform: 'rotate(90deg)', display: 'inline-block' };
+                case '🦞': 
+                    return { transform: 'rotate(135deg)', display: 'inline-block' };
+                case '⭐': 
+                    return { transform: 'rotate(0deg)', display: 'inline-block' };
+                case '🐠':
+                case '🐟':
+                case '🐡':
+                case '🦐':
+                default:
+                    return { transform: 'scaleX(-1)', display: 'inline-block' };
+            }
+        };
         
         const AQUARIUM_BUBBLES = Array.from({length: 15}, (_, i) => ({
             id: i, 
@@ -274,6 +288,12 @@
                 return saved !== null ? saved : 'auto';
             });
 
+            const [simulatedStreakInput, setSimulatedStreakInput] = useState(50);
+
+            // ★ 密碼輸入系統的 State (升級版)
+            const [authModal, setAuthModal] = useState({ isOpen: false, action: null }); 
+            const [adminPassword, setAdminPassword] = useState('');
+
             const adjustedNow = useMemo(() => new Date(now.getTime() + offset), [now, offset]);
             const effectiveDay = useMemo(() => {
                 if (simulatedDay === 'auto') return adjustedNow.getDay();
@@ -283,7 +303,7 @@
             const [schedule, setSchedule] = useState([]);
 
             useEffect(() => {
-                const scheduleStorageKey = `daily_schedule_v34_day_${effectiveDay}`;
+                const scheduleStorageKey = `daily_schedule_v40_day_${effectiveDay}`;
                 const saved = localStorage.getItem(scheduleStorageKey);
                 if (saved) {
                     setSchedule(JSON.parse(saved));
@@ -303,32 +323,34 @@
                 return (typeof window !== 'undefined' && window.innerWidth < 1024) ? 24 : 48;
             });
 
-            // --- 紀錄所有上課日 ---
+            // ★ 將資料庫儲存 Key 升級至 v40，強制拋棄舊版損壞的日曆資料
             const [schoolDays, setSchoolDays] = useState(() => {
-                const saved = localStorage.getItem('school_days_v34');
+                const saved = localStorage.getItem('school_days_v40');
+                // 直接放空或讀取最新的 v40 陣列，不繼承舊版幽靈資料
                 return saved ? JSON.parse(saved) : [];
             });
 
             // --- 魚種與連續餵食紀錄 ---
             const [fishStats, setFishStats] = useState(() => {
-                const saved = localStorage.getItem('fish_stats_v34');
+                const saved = localStorage.getItem('fish_stats_v40');
                 if (saved) return JSON.parse(saved);
                 
-                const oldSaved = localStorage.getItem('fish_stats_v33');
+                // 允許繼承舊版的連續天數與魚種
+                const oldSaved = localStorage.getItem('fish_stats_v38');
                 if (oldSaved) {
                     return JSON.parse(oldSaved);
                 }
 
                 const initial = {};
                 for(let i=1; i<=26; i++) {
-                    initial[i] = { type: FISH_ICONS[i % FISH_ICONS.length], streak: 0, lastFed: '', lastFedTimestamp: 0, leaveDates: [] };
+                    initial[i] = { type: FISH_ICONS[0], streak: 0, lastFed: '', lastFedTimestamp: 0, leaveDates: [] };
                 }
                 return initial;
             });
 
             // --- 每日餵食狀態 ---
             const [feedStates, setFeedStates] = useState(() => {
-                const saved = localStorage.getItem('feed_states_v34');
+                const saved = localStorage.getItem('feed_states_v40');
                 const todayStr = getTodayStr(new Date()); 
                 if (saved) {
                     const data = JSON.parse(saved);
@@ -340,6 +362,9 @@
             });
 
             const lastDateRef = useRef(getTodayStr(new Date()));
+
+            // 控制是否顯示魚的座號
+            const [showFishIds, setShowFishIds] = useState(() => localStorage.getItem('show_fish_ids') !== 'false');
 
             const [foodsState, setFoodsState] = useState([]); 
             const [contactBookContent, setContactBookContent] = useState(() => localStorage.getItem('contact_book') || "");
@@ -359,8 +384,8 @@
             const lastTimeRef = useRef(performance.now());
             const fishesLogic = useRef({});
             const foodsLogic = useRef({});
+            const bubblesLogic = useRef({}); 
             
-            // 為了讓動畫內部取得最新狀態
             const fishStatsRef = useRef(fishStats);
             const schoolDaysRef = useRef(schoolDays);
             const feedStatesRef = useRef(feedStates);
@@ -373,21 +398,24 @@
             useEffect(() => localStorage.setItem('contact_book', contactBookContent), [contactBookContent]);
             useEffect(() => localStorage.setItem('context_reminders_v2', JSON.stringify(reminders)), [reminders]);
             useEffect(() => localStorage.setItem('contact_font_size', contactFontSize), [contactFontSize]);
-            useEffect(() => localStorage.setItem('fish_stats_v34', JSON.stringify(fishStats)), [fishStats]);
-            useEffect(() => localStorage.setItem('school_days_v34', JSON.stringify(schoolDays)), [schoolDays]);
+            
+            // 更新 Storage Key 為 v40
+            useEffect(() => localStorage.setItem('fish_stats_v40', JSON.stringify(fishStats)), [fishStats]);
+            useEffect(() => localStorage.setItem('school_days_v40', JSON.stringify(schoolDays)), [schoolDays]);
+            useEffect(() => localStorage.setItem('show_fish_ids', showFishIds), [showFishIds]); 
             
             useEffect(() => {
                 if (schedule.length > 0) {
-                    localStorage.setItem(`daily_schedule_v34_day_${effectiveDay}`, JSON.stringify(schedule));
+                    localStorage.setItem(`daily_schedule_v40_day_${effectiveDay}`, JSON.stringify(schedule));
                 }
             }, [schedule, effectiveDay]);
 
             useEffect(() => {
                 const todayStr = getTodayStr(adjustedNow);
-                localStorage.setItem('feed_states_v34', JSON.stringify({ date: todayStr, feeds: feedStates }));
+                localStorage.setItem('feed_states_v40', JSON.stringify({ date: todayStr, feeds: feedStates }));
             }, [feedStates, adjustedNow]);
 
-            // --- 智能上課日判定機制 ---
+            // 自動更新上課日曆
             useEffect(() => {
                 const todayStr = getTodayStr(adjustedNow);
                 const hasAnyFed = Object.values(feedStates).some(Boolean);
@@ -408,7 +436,6 @@
                     const freshNow = new Date();
                     setNow(freshNow);
                     
-                    // 跨夜自動重置餵食狀態
                     const currentToday = getTodayStr(freshNow);
                     if (currentToday !== lastDateRef.current) {
                         lastDateRef.current = currentToday;
@@ -439,18 +466,62 @@
                 return () => clearInterval(wTimer);
             }, []);
 
-            // --- 真實物理引擎與遊戲迴圈 ---
+            // --- ★ 終極版：全方位向量群集物理引擎 ---
             useEffect(() => {
+                // 初始化實體氣泡
+                for(let i=0; i<NUM_BUBBLES; i++) {
+                    if (!bubblesLogic.current[i]) {
+                        bubblesLogic.current[i] = {
+                            x: Math.random() * 90 + 5,
+                            y: 100 + Math.random() * 100,
+                            currentX: 0,
+                            speed: Math.random() * 0.02 + 0.015,
+                            swayOffset: Math.random() * 1000
+                        };
+                    }
+                }
+
+                // 初始化網格分散，避免初始擠在一起
+                const generatedPositions = [];
+                const minDist = 12; 
+                
                 for(let i=1; i<=26; i++) {
                     if (!fishesLogic.current[i]) {
+                        let initX, initY;
+                        let attempts = 0;
+                        let valid = false;
+
+                        while (!valid && attempts < 50) {
+                            initX = Math.random() * 80 + 10;
+                            initY = Math.random() * 70 + 10;
+                            valid = true;
+                            for (const pos of generatedPositions) {
+                                const dx = initX - pos.x;
+                                const dy = initY - pos.y;
+                                if (Math.sqrt(dx * dx + dy * dy) < minDist) {
+                                    valid = false;
+                                    break;
+                                }
+                            }
+                            attempts++;
+                        }
+                        generatedPositions.push({ x: initX, y: initY });
+
+                        const startAngle = Math.random() * Math.PI * 2;
+
                         fishesLogic.current[i] = {
-                            x: Math.random() * 80 + 10,
-                            y: Math.random() * 70 + 10,
-                            tx: Math.random() * 80 + 10,
-                            ty: Math.random() * 70 + 10,
-                            speed: Math.random() * 0.04 + 0.02, 
-                            state: 'wander',
-                            flip: false,
+                            x: initX,
+                            y: initY,
+                            vx: Math.cos(startAngle) * 0.01, 
+                            vy: Math.sin(startAngle) * 0.01,
+                            hx: Math.cos(startAngle), // 視覺朝向 X 
+                            hy: Math.sin(startAngle), // 視覺朝向 Y
+                            wanderAngle: startAngle,  // 游動目標角度
+                            speed: Math.random() * 0.03 + 0.02, // 基礎悠游速度
+                            state: 'wander', 
+                            idleTimer: 0,
+                            interactionCooldown: Math.random() * 5000,
+                            targetFishId: null,
                             targetFoodId: null
                         };
                     }
@@ -459,51 +530,132 @@
                 const updateLoop = (time) => {
                     const dt = time - lastTimeRef.current;
                     lastTimeRef.current = time;
-                    const safeDt = Math.min(dt, 50);
+                    const safeDt = Math.min(dt, 50); // 防爆衝
+                    const todayStr = getTodayStr(new Date(Date.now() + offset));
 
                     const foods = foodsLogic.current;
                     const fishes = fishesLogic.current;
 
-                    // 1. 更新食物物理 (搖晃下落)
+                    // 0. 更新氣泡物理
+                    for(let i=0; i<NUM_BUBBLES; i++) {
+                        const b = bubblesLogic.current[i];
+                        b.y -= b.speed * safeDt;
+                        // 氣泡飄出水面後重置回底部
+                        if (b.y < -5) {
+                            b.y = 100 + Math.random() * 20;
+                            b.x = Math.random() * 90 + 5;
+                        }
+                        b.currentX = b.x + Math.sin((time + b.swayOffset) * 0.002) * 2;
+                        const bEl = document.getElementById(`bubble-${i}`);
+                        if (bEl) {
+                            bEl.style.top = `${b.y}%`;
+                            bEl.style.left = `${b.currentX}%`;
+                        }
+                    }
+
+                    // 1. 食物物理 (加入重力彈跳)
                     for (const fId in foods) {
                         const f = foods[fId];
-                        if (f.y < 92) {
-                            f.y += 0.015 * safeDt; 
+                        let rotateAngle = 0;
+
+                        if (f.state === 'bubbled') {
+                            const b = bubblesLogic.current[f.bubbleId];
+                            f.bubbleTimer -= safeDt;
+                            // 確保氣泡還在水面下，跟隨氣泡上升
+                            if (b && b.y > 0) {
+                                f.x = b.currentX + f.catchOffsetX;
+                                f.y = b.y + f.catchOffsetY;
+                                f.swayTime += safeDt;
+                                rotateAngle = Math.cos(f.swayTime * 0.005) * 45;
+                            } else {
+                                f.bubbleTimer = 0; // 氣泡消失，提早掉落
+                            }
+
+                            if (f.bubbleTimer <= 0) {
+                                f.state = 'falling';
+                                f.startX = f.x; 
+                                f.vy = 0; // 重置垂直速度
+                            }
+                        } else if (f.state === 'falling') { 
+                            f.vy = f.vy ?? 0.005; 
+                            f.vy += 0.00002 * safeDt; // 重力加速度
+                            if (f.vy > 0.012) f.vy = 0.012; // 終端速度限制
+
+                            f.y += f.vy * safeDt; 
                             f.swayTime += safeDt;
                             f.x = f.startX + Math.sin(f.swayTime * 0.003) * 2.5;
+                            rotateAngle = Math.cos(f.swayTime * 0.003) * 30; 
+
+                            // 偵測是否碰撞到上升的氣泡
+                            if (f.y > 0) {
+                                for (let i = 0; i < NUM_BUBBLES; i++) {
+                                    const b = bubblesLogic.current[i];
+                                    if (b.y > 0 && b.y < 95) {
+                                        const dx = f.x - b.currentX;
+                                        const dy = f.y - b.y;
+                                        // 碰撞判定範圍
+                                        if (Math.abs(dx) < 1.5 && Math.abs(dy) < 2) {
+                                            f.state = 'bubbled';
+                                            f.bubbleTimer = 500; // 被氣泡帶往上 0.5 秒
+                                            f.bubbleId = i;
+                                            f.catchOffsetX = dx; // 鎖定相對位置
+                                            f.catchOffsetY = dy;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+
+                            // 沉到底部的物理彈跳
+                            if (f.state === 'falling' && f.y >= 94) {
+                                f.y = 94; // 鎖定水底淺灘深度
+                                if (f.vy > 0.008) {
+                                    // 觸地反彈
+                                    f.vy = -f.vy * 0.5; 
+                                } else {
+                                    // 彈跳能量耗盡，轉為底部滾動狀態
+                                    f.state = 'settled'; 
+                                }
+                            }
+
                         } else {
-                            f.y = 92; 
+                            // 停在水底與滾動
+                            f.y = 94; 
                             f.swayTime += safeDt;
+                            // 模擬底部水流：讓飼料在水底持續滾動漂移
+                            f.startX += f.bottomVx * safeDt;
+                            
+                            // 碰到水缸邊緣時水流反轉
+                            if (f.startX < 4) { f.startX = 4; f.bottomVx *= -1; }
+                            if (f.startX > 96) { f.startX = 96; f.bottomVx *= -1; }
+                            
                             f.x = f.startX + Math.sin(f.swayTime * 0.001) * 0.5;
+                            
+                            // 根據滾動方向產生旋轉效果
+                            f.bottomRot += f.bottomVx * safeDt * 10;
+                            rotateAngle = f.bottomRot;
                         }
                         
                         const el = document.getElementById(fId);
                         if (el) {
                             el.style.top = `${f.y}%`;
                             el.style.left = `${f.x}%`;
-                            const rotateAngle = Math.cos(f.swayTime * 0.003) * 30; 
                             el.style.transform = `translate(-50%, -50%) rotate(${rotateAngle}deg)`;
                         }
                     }
 
-                    // 2. 更新魚群游動與生死判斷
+                    // 2. 魚群向量與行為物理
                     for (let i = 1; i <= 26; i++) {
                         const fish = fishes[i];
                         const stat = fishStatsRef.current[i] || { streak: 0, lastFed: '', leaveDates: [] };
-                        const todayStr = getTodayStr(new Date(Date.now() + offset));
                         const isLeaveToday = stat.leaveDates && stat.leaveDates.includes(todayStr);
                         
-                        // 計算錯過的天數 (排除請假)
                         const missedDays = schoolDaysRef.current.filter(d => d > stat.lastFed && !(stat.leaveDates || []).includes(d)).length;
-                        
-                        // 生死判斷：如果錯過 >= 2 天，且今天尚未被餵食，且今天沒有請假，就餓死
                         const isDead = missedDays >= 2 && !feedStatesRef.current[i] && !isLeaveToday;
 
-                        // 成長邏輯：每 5 天成長一次
-                        const growthStage = Math.floor(stat.streak / 5);
-                        const fishSize = Math.min(84, 24 + growthStage * 12);
-                        
-                        const speedMultiplier = fishSize / 24; 
+                        const growthStage = Math.floor(stat.streak / 10);
+                        const fishSize = Math.min(100, 24 + growthStage * 8);
+                        const speedMultiplier = Math.min(1.8, fishSize / 24); 
                         const currentBaseSpeed = fish.speed * speedMultiplier;
                         const collisionDist = 1.5 + (fishSize / 40);
 
@@ -511,72 +663,205 @@
 
                         if (isDead) {
                             fish.state = 'dead';
-                            fish.flip = false; 
-                            if (fish.y < 90) {
-                                fish.y += 0.05 * safeDt; 
-                            } else {
-                                fish.y = 90;
-                            }
+                            // 讓死掉的魚沉得更深，躺在水草裡
+                            if (fish.y < 98) fish.y += 0.05 * safeDt; 
+                            else fish.y = 98;
                             
                             if (sprite) {
-                                sprite.style.transform = 'scaleY(-1)'; 
+                                sprite.style.transform = 'scaleY(-1) rotate(0deg)'; 
                                 sprite.style.filter = 'grayscale(100%) opacity(70%)';
                             }
                         } else {
-                            if (sprite) {
-                                sprite.style.filter = 'none';
-                                sprite.style.transform = fish.flip ? 'scaleX(-1)' : 'scaleX(1)';
+                            if (sprite) sprite.style.filter = 'none';
+
+                            if (fish.interactionCooldown > 0) fish.interactionCooldown -= safeDt;
+
+                            let forceX = 0;
+                            let forceY = 0;
+                            let targetSpeed = currentBaseSpeed;
+
+                            // 處理狀態倒數
+                            if (['idle', 'stare', 'evade', 'chase'].includes(fish.state)) {
+                                fish.idleTimer -= safeDt;
+                                if (fish.idleTimer <= 0) fish.state = 'wander';
                             }
 
-                            let tx = fish.tx;
-                            let ty = fish.ty;
+                            // 社交互動判定 (只限優游或休息時)
+                            if ((fish.state === 'wander' || fish.state === 'idle') && fish.interactionCooldown <= 0) {
+                                for (let j = 1; j <= 26; j++) {
+                                    if (i === j) continue;
+                                    const otherFish = fishes[j];
+                                    if (otherFish.state !== 'wander' && otherFish.state !== 'idle') continue;
+                                    if (otherFish.interactionCooldown > 0) continue;
 
+                                    const dx = fish.x - otherFish.x;
+                                    const dy = fish.y - otherFish.y;
+                                    const dist = Math.sqrt(dx*dx + dy*dy);
+
+                                    if (dist < 8 && Math.random() < 0.2) {
+                                        const rand = Math.random();
+                                        if (rand < 0.35) { 
+                                            // 1. 雙方互相閃避 (轉頭反向游走)
+                                            fish.state = 'evade';
+                                            otherFish.state = 'evade';
+                                            fish.idleTimer = 1500;
+                                            otherFish.idleTimer = 1500;
+                                            
+                                            fish.wanderAngle = Math.atan2(dy, dx);
+                                            otherFish.wanderAngle = Math.atan2(-dy, -dx);
+                                            
+                                            fish.vx = dx * 0.5; fish.vy = dy * 0.5;
+                                            otherFish.vx = -dx * 0.5; otherFish.vy = -dy * 0.5;
+
+                                        } else if (rand < 0.7) { 
+                                            // 2. 追逐與被跟隨
+                                            fish.state = 'chase';
+                                            fish.idleTimer = 3000;
+                                            fish.targetFishId = j;
+                                            
+                                            otherFish.state = 'evade'; 
+                                            otherFish.idleTimer = 3000;
+                                            otherFish.wanderAngle = Math.atan2(-dy, -dx);
+
+                                        } else { 
+                                            // 3. 對望發呆
+                                            fish.state = 'stare';
+                                            otherFish.state = 'stare';
+                                            const stareTime = 3000;
+                                            fish.idleTimer = stareTime;
+                                            otherFish.idleTimer = stareTime;
+                                            
+                                            fish.hx = -dx; fish.hy = -dy;
+                                            otherFish.hx = dx; otherFish.hy = dy;
+                                            fish.vx *= 0.1; fish.vy *= 0.1;
+                                            otherFish.vx *= 0.1; otherFish.vy *= 0.1;
+                                        }
+                                        
+                                        fish.interactionCooldown = 5000;
+                                        otherFish.interactionCooldown = 5000;
+                                        break; 
+                                    }
+                                }
+                            }
+
+                            // === 向量轉向力 (Steering Behaviors) 計算 ===
                             if (fish.state === 'seek') {
+                                targetSpeed = currentBaseSpeed * 3.5; 
                                 const targetFood = foods[fish.targetFoodId];
                                 if (targetFood) {
-                                    tx = targetFood.x; 
-                                    ty = targetFood.y;
+                                    const dx = targetFood.x - fish.x;
+                                    const dy = targetFood.y - fish.y;
+                                    const dist = Math.sqrt(dx*dx + dy*dy);
+                                    
+                                    if (dist < collisionDist) {
+                                        delete foods[fish.targetFoodId];
+                                        document.dispatchEvent(new CustomEvent('fishEat', { detail: { num: i, foodId: fish.targetFoodId } }));
+                                        fish.state = 'wander';
+                                        fish.wanderAngle = Math.atan2(fish.vy, fish.vx); 
+                                    } else {
+                                        forceX += (dx / dist) * 1.5; 
+                                        forceY += (dy / dist) * 1.5;
+                                    }
                                 } else {
                                     fish.state = 'wander';
-                                    fish.tx = Math.random() * 80 + 10;
-                                    fish.ty = Math.random() * 70 + 15;
+                                }
+                            } else if (fish.state === 'idle' || fish.state === 'stare') {
+                                targetSpeed = 0; 
+                            } else if (fish.state === 'chase') {
+                                targetSpeed = currentBaseSpeed * 1.6;
+                                const tFish = fishes[fish.targetFishId];
+                                if (tFish && tFish.state !== 'dead') {
+                                    const dx = tFish.x - fish.x;
+                                    const dy = tFish.y - fish.y;
+                                    const dist = Math.sqrt(dx*dx + dy*dy);
+                                    if (dist > 1) {
+                                        forceX += (dx/dist) * 1.2;
+                                        forceY += (dy/dist) * 1.2;
+                                    }
+                                } else {
+                                    fish.state = 'wander';
+                                }
+                            } else if (fish.state === 'evade') {
+                                targetSpeed = currentBaseSpeed * 2.0; 
+                                forceX += Math.cos(fish.wanderAngle) * 1.5;
+                                forceY += Math.sin(fish.wanderAngle) * 1.5;
+                            } else {
+                                targetSpeed = isLeaveToday ? currentBaseSpeed * 0.5 : currentBaseSpeed;
+                                fish.wanderAngle += (Math.random() - 0.5) * 0.1; 
+                                forceX += Math.cos(fish.wanderAngle) * 0.3;
+                                forceY += Math.sin(fish.wanderAngle) * 0.3;
+
+                                if (Math.random() < 0.001) {
+                                    fish.state = 'idle';
+                                    fish.idleTimer = Math.random() * 2000 + 1000;
                                 }
                             }
 
-                            const dx = tx - fish.x;
-                            const dy = ty - fish.y;
-                            const dist = Math.sqrt(dx * dx + dy * dy);
-
-                            if (fish.state === 'wander' && dist < 2) {
-                                fish.tx = Math.random() * 80 + 10;
-                                fish.ty = Math.random() * 70 + 15;
-                            }
-
-                            if (fish.state === 'seek' && dist < collisionDist) {
-                                const fId = fish.targetFoodId;
-                                if (foods[fId]) {
-                                    delete foods[fId];
-                                    document.dispatchEvent(new CustomEvent('fishEat', { detail: { num: i, foodId: fId } }));
+                            // 群集排斥力 (避免重疊)
+                            let sepX = 0, sepY = 0;
+                            for(let j=1; j<=26; j++){
+                                if(i===j) continue;
+                                const other = fishes[j];
+                                if(other.state === 'dead') continue;
+                                const ddx = fish.x - other.x;
+                                const ddy = fish.y - other.y;
+                                const ddist = Math.sqrt(ddx*ddx + ddy*ddy);
+                                if(ddist < 5 && ddist > 0) {
+                                    sepX += (ddx/ddist) * (5 - ddist) * 0.15; 
+                                    sepY += (ddy/ddist) * (5 - ddist) * 0.15;
                                 }
-                                fish.state = 'wander';
-                                fish.tx = Math.random() * 80 + 10;
-                                fish.ty = Math.random() * 70 + 15;
+                            }
+                            forceX += sepX;
+                            forceY += sepY;
+
+                            // 邊界防護力 (碰到牆壁會自然轉彎)
+                            const marginX = 8, marginY = 8;
+                            if (fish.x < marginX) forceX += (marginX - fish.x) * 0.2;
+                            if (fish.x > 100 - marginX) forceX -= (fish.x - (100 - marginX)) * 0.2;
+                            if (fish.y < marginY) forceY += (marginY - fish.y) * 0.2;
+                            if (fish.y > 100 - marginY) forceY -= (fish.y - (100 - marginY)) * 0.2;
+
+                            // 更新實際速度向量 
+                            fish.vx += forceX * (safeDt / 16) * 0.05;
+                            fish.vy += forceY * (safeDt / 16) * 0.05;
+
+                            // 邊界硬限制與流暢反彈
+                            const marginX_hard = 4, marginY_hard = 4;
+                            if (fish.x < marginX_hard && fish.vx < 0) { fish.vx *= -1; fish.wanderAngle = Math.atan2(fish.vy, fish.vx); }
+                            if (fish.x > 100 - marginX_hard && fish.vx > 0) { fish.vx *= -1; fish.wanderAngle = Math.atan2(fish.vy, fish.vx); }
+                            if (fish.y < marginY_hard && fish.vy < 0) { fish.vy *= -1; fish.wanderAngle = Math.atan2(fish.vy, fish.vx); }
+                            if (fish.y > 102 - marginY_hard && fish.vy > 0) { fish.vy *= -1; fish.wanderAngle = Math.atan2(fish.vy, fish.vx); }
+
+                            const currentVLen = Math.sqrt(fish.vx*fish.vx + fish.vy*fish.vy) || 1;
+                            
+                            if (targetSpeed > 0) {
+                                fish.vx = (fish.vx / currentVLen) * targetSpeed;
+                                fish.vy = (fish.vy / currentVLen) * targetSpeed;
+                            } else {
+                                fish.vx *= 0.8; 
+                                fish.vy *= 0.8;
                             }
 
-                            if (dist > 0.5) {
-                                if (dx > 0.5) fish.flip = true; 
-                                else if (dx < -0.5) fish.flip = false;
+                            // 更新位置
+                            fish.x += fish.vx * (safeDt / 16);
+                            fish.y += fish.vy * (safeDt / 16);
+                            fish.x = Math.max(2, Math.min(98, fish.x));
+                            fish.y = Math.max(5, Math.min(98, fish.y));
 
-                                const statusSpeed = isLeaveToday ? currentBaseSpeed * 0.5 : currentBaseSpeed;
-                                const activeMoveSpeed = fish.state === 'seek' ? statusSpeed * 2.5 : statusSpeed;
-                                const stepX = (dx / dist) * activeMoveSpeed * (safeDt / 16);
-                                const stepY = (dy / dist) * activeMoveSpeed * (safeDt / 16);
+                            // === ★ 更新視覺朝向 (0~360 全方位，保證頭永遠朝前) ===
+                            if (currentVLen > 0.005 && fish.state !== 'stare') {
+                                fish.hx = fish.vx;
+                                fish.hy = fish.vy;
+                            }
 
-                                if (Math.abs(stepX) > Math.abs(dx)) fish.x = tx;
-                                else fish.x += stepX;
+                            if (sprite) {
+                                const hx = fish.hx || 1;
+                                const hy = fish.hy || 0;
+                                
+                                const rotAngle = Math.atan2(hy, hx) * (180 / Math.PI);
+                                const flipY = hx < 0 ? -1 : 1;
 
-                                if (Math.abs(stepY) > Math.abs(dy)) fish.y = ty;
-                                else fish.y += stepY;
+                                sprite.style.transform = `rotate(${rotAngle}deg) scaleY(${flipY})`;
                             }
                         }
 
@@ -606,23 +891,20 @@
                     
                     setFishStats(prev => {
                         const todayStr = getTodayStr(adjustedNow);
-                        const stat = prev[num] || { type: FISH_ICONS[num%FISH_ICONS.length], streak: 0, lastFed: '', lastFedTimestamp: 0, leaveDates: [] };
+                        const stat = prev[num] || { type: FISH_ICONS[0], streak: 0, lastFed: '', lastFedTimestamp: 0, leaveDates: [] };
                         
-                        // 計算嚴格錯過天數 (只要中斷 1 天以上，就重置為 1)
                         const missedDays = schoolDaysRef.current.filter(d => d > stat.lastFed && d < todayStr && !(stat.leaveDates || []).includes(d)).length;
                         
                         let newStreak = stat.streak;
 
                         if (missedDays >= 1 || stat.lastFed === '') {
-                            // 中斷了，或是第一次餵食，重新計算
                             newStreak = 1;
                         } else if (stat.lastFed !== todayStr) {
-                            // 正常接續餵食
                             newStreak += 1;
                         }
 
-                        // ★ 成長慶祝：當 streak 剛好為 5 的倍數，噴發大量彩帶！
-                        if (newStreak > 0 && newStreak % 5 === 0 && stat.lastFed !== todayStr) {
+                        // 成長慶祝：當 streak 剛好為 10 的倍數，噴發大量彩帶
+                        if (newStreak > 0 && newStreak % 10 === 0 && stat.lastFed !== todayStr) {
                             confetti({
                                 particleCount: 150,
                                 spread: 80,
@@ -652,8 +934,6 @@
                 }
                 if (fishesLogic.current[num] && fishesLogic.current[num].state === 'seek') {
                     fishesLogic.current[num].state = 'wander';
-                    fishesLogic.current[num].tx = Math.random() * 80 + 10;
-                    fishesLogic.current[num].ty = Math.random() * 70 + 15;
                 }
 
                 setFishStats(prev => {
@@ -680,7 +960,7 @@
             const handleToggleLeave = (num) => {
                 const todayStr = getTodayStr(adjustedNow);
                 setFishStats(prev => {
-                    const stat = prev[num] || { type: FISH_ICONS[num%FISH_ICONS.length], streak: 0, lastFed: '', lastFedTimestamp: 0, leaveDates: [] };
+                    const stat = prev[num] || { type: FISH_ICONS[0], streak: 0, lastFed: '', lastFedTimestamp: 0, leaveDates: [] };
                     const leaveDates = stat.leaveDates || [];
                     let newLeaveDates;
                     
@@ -799,7 +1079,6 @@
                 const newFoodId = `food-${num}`;
                 const startX = Math.random() * 80 + 10; 
                 
-                // 取得當天的節慶特餐，若無則為 null (使用一般圓形飼料)
                 const specialFood = getHolidayFood(adjustedNow);
                 
                 foodsLogic.current[newFoodId] = { 
@@ -809,6 +1088,12 @@
                     y: -5, 
                     fishId: num, 
                     swayTime: 0,
+                    bottomVx: (Math.random() > 0.5 ? 1 : -1) * (Math.random() * 0.008 + 0.004), 
+                    bottomRot: 0,
+                    vy: 0.005, 
+                    state: 'falling', 
+                    bubbleTimer: 0,
+                    bubbleId: null,
                     icon: specialFood
                 };
                 
@@ -822,7 +1107,6 @@
 
             const seatNumbers = Array.from({ length: 26 }, (_, i) => i + 1);
             
-            // 計算今日完成人數與請假人數
             const todayStr = getTodayStr(adjustedNow);
             let completedCount = 0;
             let leaveCount = 0;
@@ -838,7 +1122,6 @@
                 }
             });
 
-            // 判斷今日特餐與顯示標題
             const currentFoodIcon = getHolidayFood(adjustedNow);
             const feedTitle = currentFoodIcon ? `🐾 作業完成確認 (今日特餐：${currentFoodIcon})` : `🐾 作業完成確認 (點擊座號餵魚)`;
 
@@ -848,6 +1131,83 @@
                     {/* 背景裝飾 */}
                     <div className="absolute top-[-10%] left-[-10%] w-[80vw] h-[80vw] lg:w-[40vw] lg:h-[40vw] bg-blue-200 rounded-full mix-blend-multiply filter blur-3xl opacity-30 bg-float"></div>
                     <div className="absolute bottom-[-10%] right-[-10%] w-[80vw] h-[80vw] lg:w-[40vw] lg:h-[40vw] bg-pink-200 rounded-full mix-blend-multiply filter blur-3xl opacity-30 bg-float" style={{animationDelay: '1s'}}></div>
+
+                    {/* ★ 帶有 UI 按鈕的防護密碼鎖 Modal */}
+                    {authModal.isOpen && (
+                        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+                            <div className="bg-white p-6 rounded-2xl shadow-2xl flex flex-col items-center gap-4 animate-[fadeIn_0.2s_ease-out] w-full max-w-sm">
+                                <div className="text-xl font-black text-slate-700 mb-2">🔒 系統管理員驗證</div>
+                                <input 
+                                    type="password" 
+                                    value={adminPassword}
+                                    onChange={e => setAdminPassword(e.target.value)}
+                                    placeholder="請輸入密碼"
+                                    className="border-2 border-slate-300 bg-slate-50 text-slate-800 rounded-lg px-4 py-3 text-center text-2xl tracking-[0.3em] outline-none focus:border-blue-500 w-full font-mono"
+                                    autoFocus
+                                    onKeyDown={e => {
+                                        if (e.key === 'Enter') document.getElementById('auth-submit-btn').click();
+                                        if (e.key === 'Escape') { setAuthModal({isOpen: false, action: null}); setAdminPassword(''); }
+                                    }}
+                                />
+                                <div className="flex gap-3 w-full mt-2">
+                                    <button 
+                                        onClick={() => { setAuthModal({isOpen: false, action: null}); setAdminPassword(''); }} 
+                                        className="flex-1 bg-slate-200 text-slate-600 py-3 rounded-xl font-bold hover:bg-slate-300 transition"
+                                    >
+                                        取消
+                                    </button>
+                                    <button 
+                                        id="auth-submit-btn"
+                                        onClick={() => {
+                                            if (adminPassword === '06090721') {
+                                                if (authModal.action === 'simulate') {
+                                                    setFishStats(prev => {
+                                                        let n = {...prev};
+                                                        for(let i=1; i<=26; i++) if(n[i]) n[i].streak = simulatedStreakInput;
+                                                        return n;
+                                                    });
+                                                    alert('✅ 設定成功！天數已成功模擬。');
+                                                } else if (authModal.action === 'reset') {
+                                                    setFishStats(prev => {
+                                                        let n = {...prev};
+                                                        for(let i=1; i<=26; i++) {
+                                                            n[i] = { type: FISH_ICONS[0], streak: 0, lastFed: '', lastFedTimestamp: 0, leaveDates: [] };
+                                                        }
+                                                        return n;
+                                                    });
+                                                    setFeedStates(prev => {
+                                                        let n = {...prev};
+                                                        for(let i=1; i<=26; i++) n[i] = false;
+                                                        return n;
+                                                    });
+                                                    // 徹底清空上課日紀錄與實體物件
+                                                    setSchoolDays([]);
+                                                    schoolDaysRef.current = [];
+                                                    setFoodsState([]);
+                                                    for(let i=1; i<=26; i++) {
+                                                        if (fishesLogic.current[i]) {
+                                                            fishesLogic.current[i].state = 'wander';
+                                                            fishesLogic.current[i].targetFoodId = null;
+                                                        }
+                                                    }
+                                                    foodsLogic.current = {};
+                                                    alert('✅ 重置成功！系統已恢復為最初始狀態。');
+                                                }
+                                                setAuthModal({isOpen: false, action: null});
+                                                setAdminPassword('');
+                                            } else {
+                                                alert('❌ 密碼錯誤！');
+                                                setAdminPassword('');
+                                            }
+                                        }} 
+                                        className="flex-1 bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 transition shadow-lg"
+                                    >
+                                        確認執行
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
                     {/* 倒數 Modal */}
                     {countDownMode !== 'idle' && (
@@ -938,22 +1298,16 @@
                                             <div className="bg-teal-50 p-4 rounded-lg border border-teal-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                                                 <div>
                                                     <div className="text-teal-800 font-bold text-lg">🐟 專屬魚種與狀態設定</div>
-                                                    <div className="text-teal-600 text-sm">每連續餵食 5 天長大一階！中斷會重置天數。</div>
+                                                    <div className="text-teal-600 text-sm">每連續餵食 10 天長大一階！中斷會重置天數。</div>
                                                 </div>
-                                                <button onClick={()=>{
-                                                    if(confirm('確定要將全班的魚重置為初始狀態嗎？\n(包含連續餵食天數歸零、魚種恢復為預設的 🐠)')) {
-                                                        setFishStats(prev => {
-                                                            let n = {...prev};
-                                                            for(let i=1; i<=26; i++) {
-                                                                if(n[i]) {
-                                                                    n[i].streak = 0;
-                                                                    n[i].type = FISH_ICONS[0]; // 恢復為第一種魚
-                                                                }
-                                                            }
-                                                            return n;
-                                                        });
-                                                    }
-                                                }} className="bg-white border border-teal-300 text-teal-600 hover:bg-teal-100 px-3 py-1.5 rounded shadow-sm text-sm font-bold transition shrink-0">重置初始狀態</button>
+                                                <div className="flex gap-2">
+                                                    <div className="flex items-center gap-1 border border-blue-300 rounded px-2 bg-white">
+                                                        <input type="number" min="0" max="999" value={simulatedStreakInput} onChange={e => setSimulatedStreakInput(Number(e.target.value))} className="w-12 text-center outline-none text-sm text-blue-600 font-bold" />
+                                                        <button onClick={() => setAuthModal({isOpen: true, action: 'simulate'})} className="bg-blue-50 hover:bg-blue-100 text-blue-600 px-2 py-1 text-sm font-bold transition shrink-0">模擬天數</button>
+                                                    </div>
+
+                                                    <button onClick={() => setAuthModal({isOpen: true, action: 'reset'})} className="bg-white border border-teal-300 text-teal-600 hover:bg-teal-100 px-3 py-1.5 rounded shadow-sm text-sm font-bold transition shrink-0">重置初始狀態</button>
+                                                </div>
                                             </div>
                                             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
                                                 {seatNumbers.map(num => {
@@ -1202,9 +1556,14 @@
                         {/* 右：全新專屬座號水族箱 */}
                         <div className="w-full lg:w-[35%] rounded-2xl flex flex-col overflow-hidden shadow-xl relative min-h-[40vh] lg:h-full shrink-0 lg:shrink mb-6 lg:mb-0 border border-blue-300">
                             {/* 水族箱頂部標題 */}
-                            <div className="bg-gradient-to-r from-blue-700 to-cyan-600 p-2 sm:p-3 text-white text-center font-bold text-sm sm:text-lg shadow-md z-20 flex justify-between items-center px-4 shrink-0">
-                                <span>🌊 班級專屬水族箱 (每連續 5 天長大一階！)</span>
-                                <span className="bg-black/20 px-2 py-0.5 rounded-full text-xs sm:text-sm border border-white/20">今日已餵食: {completedCount}/{26 - leaveCount}</span>
+                            <div className="bg-gradient-to-r from-blue-700 to-cyan-600 p-2 sm:p-3 text-white text-center font-bold text-sm sm:text-lg shadow-md z-20 flex justify-between items-center px-2 sm:px-4 shrink-0">
+                                <div className="flex items-center gap-2 truncate">
+                                    <span className="truncate">🌊 水族箱</span>
+                                    <button onClick={() => setShowFishIds(!showFishIds)} className="bg-white/20 hover:bg-white/30 rounded px-2 py-0.5 text-[10px] sm:text-xs transition shrink-0 shadow-sm" title={showFishIds ? "隱藏座號" : "顯示座號"}>
+                                        {showFishIds ? '🙈 隱藏號碼' : '👁️ 顯示號碼'}
+                                    </button>
+                                </div>
+                                <span className="bg-black/20 px-2 py-0.5 rounded-full text-[10px] sm:text-xs border border-white/20 shrink-0">餵食: {completedCount}/{26 - leaveCount}</span>
                             </div>
                             
                             {/* 水族箱本體 */}
@@ -1212,17 +1571,17 @@
                                 {/* 光線折射裝飾 */}
                                 <div className="absolute top-0 left-0 w-full h-32 bg-gradient-to-b from-white/30 to-transparent pointer-events-none z-10"></div>
                                 
-                                {/* 氣泡動畫 */}
-                                {AQUARIUM_BUBBLES.map(bubble => (
+                                {/* 氣泡動畫 (改由物理引擎 JS 驅動) */}
+                                {Array.from({length: NUM_BUBBLES}).map((_, i) => (
                                     <div 
-                                        key={`bubble-${bubble.id}`} 
-                                        className="animate-bubble"
+                                        key={`bubble-${i}`} 
+                                        id={`bubble-${i}`}
+                                        className="js-bubble"
                                         style={{
-                                            left: bubble.left,
-                                            width: bubble.size,
-                                            height: bubble.size,
-                                            animationDuration: bubble.duration,
-                                            animationDelay: bubble.delay
+                                            width: `${5 + (i % 10)}px`,
+                                            height: `${5 + (i % 10)}px`,
+                                            top: '110%',
+                                            left: '50%'
                                         }}
                                     ></div>
                                 ))}
@@ -1234,12 +1593,8 @@
                                     const hasEatenToday = stat.lastFed === todayStr;
                                     const isLeaveToday = stat.leaveDates && stat.leaveDates.includes(todayStr);
                                     
-                                    // 死亡與錯過天數判定 (排除有請假的日子)
                                     const missedDays = schoolDays.filter(d => d > stat.lastFed && !(stat.leaveDates || []).includes(d)).length;
-                                    // 如果連續2天上課日未餵，且今天還沒被餵食，且今天沒有請假，判定為餓死
                                     const isDead = missedDays >= 2 && !feedStates[num] && !isLeaveToday;
-                                    
-                                    const isSeeking = fishesLogic.current[num]?.state === 'seek';
                                     
                                     let emoji = '';
                                     if (isDead) {
@@ -1252,34 +1607,36 @@
                                             emoji = '❤️'; // 吃飽顯示愛心 10 秒
                                         }
                                     } else {
-                                        // 還活著但還沒吃
-                                        emoji = isSeeking ? '🤤' : '😵'; // 看到食物流口水，平時頭暈餓
+                                        // 沒死也沒吃飽，預設留空
                                     }
 
-                                    // ★ 每 5 天成長一次，每次增加 12px 
-                                    const growthStage = Math.floor(stat.streak / 5);
-                                    const fishSize = Math.min(84, 24 + growthStage * 12);
+                                    // 體型解放：每 10 天成長一次，每次增加 12px 
+                                    const growthStage = Math.floor(stat.streak / 10);
+                                    const fishSize = Math.min(100, 24 + growthStage * 8);
                                     
                                     return (
                                         <div 
                                             key={`fish-${num}`} 
                                             id={`fish-container-${num}`}
-                                            className="fish-container flex flex-col items-center justify-center filter drop-shadow-lg transition-all duration-500"
+                                            className="fish-container flex flex-col items-center justify-center filter drop-shadow-lg transition-opacity duration-500"
                                             style={{ zIndex: 10 + (num % 5), opacity: isDead ? 0.7 : 0.95 }}
                                         >
-                                            {/* 魚本體 */}
+                                            {/* 魚本體 (加入特殊生物的校正 getFishInnerStyle) */}
                                             <div 
                                                 id={`fish-sprite-${num}`} 
                                                 className="fish-sprite leading-none"
                                                 style={{ fontSize: `${fishSize}px` }}
                                             >
-                                                {stat.type}
+                                                <div style={getFishInnerStyle(stat.type)}>
+                                                    {stat.type}
+                                                </div>
                                             </div>
                                             
                                             {/* 座號牌 */}
                                             <div className={`
-                                                text-[10px] sm:text-xs font-bold px-1.5 py-0.5 rounded-full mt-1 border whitespace-nowrap shadow-sm backdrop-blur-sm transition-colors duration-500
+                                                text-[10px] sm:text-xs font-bold px-1.5 py-0.5 rounded-full mt-1 border whitespace-nowrap shadow-sm backdrop-blur-sm transition-all duration-500
                                                 ${isDead ? 'bg-gray-800/80 text-gray-300 border-gray-600' : isLeaveToday ? 'bg-slate-600/80 text-white/70 border-slate-500' : hasEatenToday ? 'bg-green-400/40 text-white border-green-300/40' : 'bg-black/20 text-white/70 border-white/10'}
+                                                ${showFishIds ? 'opacity-100 scale-100' : 'opacity-0 scale-0 pointer-events-none absolute -bottom-2'}
                                             `}>
                                                 {num} {emoji && <span>{emoji}</span>}
                                             </div>
@@ -1299,7 +1656,7 @@
                                 ))}
 
                                 {/* 底部水草裝飾 */}
-                                <div className="absolute bottom-[-10px] left-0 w-full flex justify-between px-2 sm:px-4 text-3xl sm:text-5xl lg:text-6xl opacity-80 filter drop-shadow-md z-10 pointer-events-none">
+                                <div className="absolute bottom-0 left-0 w-full flex justify-between px-2 sm:px-4 text-3xl sm:text-5xl lg:text-6xl opacity-90 filter drop-shadow-lg z-30 pointer-events-none">
                                     <span>🌿</span>
                                     <span className="translate-y-2 scale-110">🪴</span>
                                     <span>🌿</span>
