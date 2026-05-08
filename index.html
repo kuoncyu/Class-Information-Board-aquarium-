@@ -225,8 +225,8 @@
             nap: ["😴 趴下休息，保持安靜", "🔋 閉目養神，下午更有力", "🤫 動作放輕，不影響他人"]
         };
 
-        // 限定小型水族生物
-        const FISH_ICONS = ['🐠', '🐟', '🐡', '🦐', '🦀', '🦞', '⭐', '🦑', '🐙'];
+        // 限定小型水族生物 (新增水母與海龜)
+        const FISH_ICONS = ['🐠', '🐟', '🐡', '🦐', '🦀', '🦞', '⭐', '🦑', '🐙', '🪼', '🐢'];
 
         const NUM_BUBBLES = 25; // 氣泡數量
 
@@ -236,6 +236,7 @@
                 case '🦀': 
                 case '🦑': 
                 case '🐙': 
+                case '🪼': // 水母預設朝上，順時針轉 90度 朝右
                     return { transform: 'rotate(90deg)', display: 'inline-block' };
                 case '🦞': 
                     return { transform: 'rotate(135deg)', display: 'inline-block' };
@@ -245,6 +246,7 @@
                 case '🐟':
                 case '🐡':
                 case '🦐':
+                case '🐢': // 海龜預設朝左，水平翻轉朝右
                 default:
                     return { transform: 'scaleX(-1)', display: 'inline-block' };
             }
