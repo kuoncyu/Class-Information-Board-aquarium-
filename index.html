@@ -52,6 +52,11 @@
             box-shadow: inset 0 0 20px rgba(0,0,0,0.5);
             color: #ecf0f1;
         }
+        /* 聯絡事項編輯區 (可個別設定文字顏色) */
+        .chalk-editor { white-space: pre-wrap; word-break: break-word; overflow-y: auto; }
+        .chalk-editor:empty::before { content: attr(data-placeholder); color: rgba(255,255,255,0.3); pointer-events: none; }
+        .chalk-swatch { width: 1.25rem; height: 1.25rem; border-radius: 9999px; border: 2px solid rgba(255,255,255,0.55); transition: transform .12s, border-color .12s; }
+        .chalk-swatch:hover { transform: scale(1.2); border-color: #fff; }
         .chalk-font {
             font-family: "KaiTi", "BiauKai", cursive;
             text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
@@ -397,6 +402,39 @@
             { id: 'bounce', name: '彈跳', icon: '🏀', dur: 1000 },
             { id: 'flip',   name: '倒立', icon: '🙃', dur: 1300 },
         ];
+        // ★ 吃到飼料的開心音效 (Web Audio 合成，不需外部檔案)：預設 1 個，每 50 天解鎖下一個；每天吃到時從已解鎖的隨機播一個
+        const SOUND_UNLOCK_DAYS = 50;
+        let __audioCtx = null;
+        const ensureAudio = () => {
+            try {
+                if (!__audioCtx) { const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return null; __audioCtx = new AC(); }
+                if (__audioCtx.state === 'suspended') __audioCtx.resume();
+                return __audioCtx;
+            } catch (e) { return null; }
+        };
+        const tone = (ctx, { type = 'sine', f0, f1, t = 0, dur = 0.15, vol = 0.2, attack = 0.012 }) => {
+            const t0 = ctx.currentTime + t;
+            const o = ctx.createOscillator(), g = ctx.createGain();
+            o.type = type;
+            o.frequency.setValueAtTime(f0, t0);
+            if (f1) o.frequency.exponentialRampToValueAtTime(f1, t0 + dur);
+            g.gain.setValueAtTime(0.0001, t0);
+            g.gain.exponentialRampToValueAtTime(vol, t0 + attack);
+            g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+            o.connect(g); g.connect(ctx.destination);
+            o.start(t0); o.stop(t0 + dur + 0.03);
+        };
+        const SFX = [
+            { id: 'pop',    name: '啵啾',     icon: '🫧', play: (c) => { tone(c, { f0: 500, f1: 1100, dur: 0.12 }); tone(c, { f0: 800, f1: 1600, t: 0.13, dur: 0.16, vol: 0.18 }); } },
+            { id: 'bell',   name: '叮咚',     icon: '🔔', play: (c) => { tone(c, { f0: 988, dur: 0.35 }); tone(c, { f0: 1319, t: 0.16, dur: 0.5 }); tone(c, { type: 'triangle', f0: 1976, t: 0.16, dur: 0.3, vol: 0.05 }); } },
+            { id: 'arp',    name: '彩虹琶音', icon: '🌈', play: (c) => { [523, 659, 784, 1047].forEach((f, i) => tone(c, { type: 'triangle', f0: f, t: i * 0.09, dur: 0.2, vol: 0.2 })); } },
+            { id: 'bubble', name: '咕嚕氣泡', icon: '💧', play: (c) => { for (let i = 0; i < 5; i++) { const f = 400 + i * 140 + Math.random() * 60; tone(c, { f0: f, f1: f * 1.6, t: i * 0.07, dur: 0.09, vol: 0.15 }); } } },
+            { id: 'wow',    name: '哇嗚',     icon: '🎈', play: (c) => { tone(c, { f0: 350, f1: 900, dur: 0.22 }); tone(c, { f0: 900, f1: 600, t: 0.22, dur: 0.25, vol: 0.18 }); } },
+            { id: 'chirp',  name: '吱吱',     icon: '🐥', play: (c) => { [0, 0.1, 0.2].forEach(t => tone(c, { type: 'triangle', f0: 1800, f1: 2600, t, dur: 0.08, vol: 0.16 })); } },
+            { id: 'boing',  name: '彈簧',     icon: '🪀', play: (c) => { tone(c, { f0: 250, f1: 700, dur: 0.15 }); tone(c, { f0: 700, f1: 350, t: 0.15, dur: 0.2, vol: 0.18 }); tone(c, { f0: 350, f1: 600, t: 0.35, dur: 0.15, vol: 0.16 }); } },
+            { id: 'cheer',  name: '歡呼',     icon: '🎉', play: (c) => { tone(c, { type: 'triangle', f0: 523, dur: 0.12 }); tone(c, { type: 'triangle', f0: 659, t: 0.1, dur: 0.12 }); tone(c, { type: 'triangle', f0: 784, t: 0.2, dur: 0.12 }); tone(c, { type: 'triangle', f0: 1047, t: 0.3, dur: 0.35 }); tone(c, { f0: 2093, f1: 2637, t: 0.35, dur: 0.2, vol: 0.07 }); } },
+        ];
+        const getUnlockedSounds = (streak) => SFX.slice(0, Math.min(SFX.length, 1 + Math.floor((streak || 0) / SOUND_UNLOCK_DAYS)));
         const ACTION_CLASSES = [...FISH_ACTIONS.map(a => `act-${a.id}`), 'act-poke'];
         const POKE_DUR = 600; // 還沒解鎖任何動作時，點擊魚的基本反應
         const CAST_MIN_MS = 30000;   // 隨機施放：最短 30 秒
@@ -624,7 +662,14 @@
             const [showFeedDays, setShowFeedDays] = useState(() => localStorage.getItem('show_feed_days') === 'true');
 
             const [foodsState, setFoodsState] = useState([]); 
-            const [contactBookContent, setContactBookContent] = useState(() => localStorage.getItem('contact_book') || "");
+            // 聯絡事項改為「圖文字色」富文字(HTML)儲存；舊版純文字會自動轉換
+            const [contactBookContent, setContactBookContent] = useState(() => {
+                const html = localStorage.getItem('contact_book_html');
+                if (html !== null) return html;
+                const old = localStorage.getItem('contact_book') || '';
+                return old.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+            });
+            const contactEditorRef = useRef(null);
             const [isSettingsOpen, setIsSettingsOpen] = useState(false);
             const [settingsTab, setSettingsTab] = useState('schedule');
             const [fishPicker, setFishPicker] = useState(null); // 設定頁正在換生物的座號
@@ -653,7 +698,7 @@
 
             useEffect(() => localStorage.setItem('clock_offset', offset), [offset]);
             useEffect(() => localStorage.setItem('simulated_day', simulatedDay), [simulatedDay]);
-            useEffect(() => localStorage.setItem('contact_book', contactBookContent), [contactBookContent]);
+            useEffect(() => localStorage.setItem('contact_book_html', contactBookContent), [contactBookContent]);
             useEffect(() => localStorage.setItem('context_reminders_v2', JSON.stringify(reminders)), [reminders]);
             useEffect(() => localStorage.setItem('contact_font_size', contactFontSize), [contactFontSize]);
             
@@ -738,9 +783,60 @@
                 const seq = buildUnlockSequence(unlockEmojisRef.current || []);
                 const from = Math.floor((oldStreak || 0) / UNLOCK_INTERVAL_DAYS);
                 const to = Math.min(seq.length, Math.floor((newStreak || 0) / UNLOCK_INTERVAL_DAYS));
-                if (to <= from) return;
-                unlockQueueRef.current.push({ num, items: seq.slice(from, to) });
+                const items = to > from ? seq.slice(from, to) : [];
+                // 每 50 天解鎖一個新音效
+                const sFrom = Math.min(SFX.length - 1, Math.floor((oldStreak || 0) / SOUND_UNLOCK_DAYS));
+                const sTo = Math.min(SFX.length - 1, Math.floor((newStreak || 0) / SOUND_UNLOCK_DAYS));
+                for (let k = sFrom + 1; k <= sTo; k++) items.push({ kind: 'sound', value: SFX[k] });
+                if (!items.length) return;
+                unlockQueueRef.current.push({ num, items });
                 playNextUnlock();
+            };
+
+            // ★ 聯絡事項：對選取的文字套用顏色（沒選取文字時，之後輸入的字會用該顏色）；可混用多種顏色
+            const CHALK_COLORS = [
+                { name: '白', c: '#ffffff' }, { name: '黃', c: '#fde047' }, { name: '粉紅', c: '#f9a8d4' }, { name: '紅', c: '#f87171' },
+                { name: '橘', c: '#fb923c' }, { name: '綠', c: '#86efac' }, { name: '藍', c: '#7dd3fc' }, { name: '紫', c: '#c4b5fd' },
+            ];
+            const syncContactBook = () => {
+                const el = contactEditorRef.current;
+                if (!el) return;
+                // 全部刪光時瀏覽器會留一個 <br>，清掉才能顯示提示文字
+                if (!el.textContent && el.innerHTML.replace(/<br\s*\/?>|<\/?div>/gi, '') === '') el.innerHTML = '';
+                setContactBookContent(el.innerHTML);
+            };
+            const applyChalkColor = (color) => {
+                const el = contactEditorRef.current;
+                if (!el) return;
+                el.focus();
+                document.execCommand('styleWithCSS', false, true);
+                document.execCommand('foreColor', false, color);
+                syncContactBook();
+            };
+
+            // ★ 吃到飼料音效：開關(存瀏覽器)、播放；新解鎖的那一天固定播新音效，其他天隨機播已解鎖的
+            const [sfxEnabled, setSfxEnabled] = useState(() => localStorage.getItem('sfx_enabled') !== '0');
+            const sfxEnabledRef = useRef(sfxEnabled);
+            const lastSfxRef = useRef(0);
+            useEffect(() => { sfxEnabledRef.current = sfxEnabled; localStorage.setItem('sfx_enabled', sfxEnabled ? '1' : '0'); }, [sfxEnabled]);
+            useEffect(() => {
+                // 瀏覽器要求使用者互動後才能發聲：第一次點擊/按鍵時先把音訊系統啟動
+                const unlock = () => { ensureAudio(); };
+                document.addEventListener('pointerdown', unlock);
+                document.addEventListener('keydown', unlock);
+                return () => { document.removeEventListener('pointerdown', unlock); document.removeEventListener('keydown', unlock); };
+            }, []);
+            const playEatSound = (oldStreak, newStreak) => {
+                if (!sfxEnabledRef.current) return;
+                const nowMs = performance.now();
+                if (nowMs - lastSfxRef.current < 120) return; // 多隻魚同時吃到時避免疊成噪音
+                lastSfxRef.current = nowMs;
+                const ctx = ensureAudio();
+                if (!ctx) return;
+                const count = getUnlockedSounds(newStreak).length;
+                const oldCount = getUnlockedSounds(oldStreak).length;
+                const idx = count > oldCount ? count - 1 : Math.floor(Math.random() * count);
+                SFX[idx].play(ctx);
             };
 
             // ★ 互動門檻：今天「真的吃到飼料」之後，這隻魚才能被拖曳 / 點擊 / 施放表情與動作。
@@ -1424,6 +1520,8 @@
 
                         // ★ 跨過 30 天門檻 → 解鎖新的表情或動作：彈窗 + 煙火
                         if (stat.lastFed !== todayStr) announceUnlocks(num, stat.streak, newStreak);
+                        // 吃到飼料的開心音效
+                        if (stat.lastFed !== todayStr) playEatSound(stat.streak, newStreak);
 
                         // ★ 額外獎勵觸發時，加碼噴發金色彩帶慶祝
                         if (bonusTriggered) {
@@ -2049,6 +2147,29 @@
                                                     </div>
                                                 </div>
 
+                                                {/* 吃到飼料音效 */}
+                                                <div className="space-y-1.5">
+                                                    <div className="flex items-center justify-between flex-wrap gap-2">
+                                                        <div className="text-xs font-bold text-pink-600">🔊 吃到飼料的開心音效（預設 1 個，每 {SOUND_UNLOCK_DAYS} 天解鎖 1 個；每天吃到時從已解鎖的隨機播一個）</div>
+                                                        <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600 cursor-pointer select-none">
+                                                            <input type="checkbox" checked={sfxEnabled} onChange={(e) => setSfxEnabled(e.target.checked)} />
+                                                            啟用音效
+                                                        </label>
+                                                    </div>
+                                                    <div className="flex flex-wrap gap-2 items-end">
+                                                        {SFX.map((sx, idx) => (
+                                                            <div key={sx.id} className="flex flex-col items-center gap-1">
+                                                                <div className="text-[10px] text-pink-400 font-bold">{idx === 0 ? '預設' : `${idx * SOUND_UNLOCK_DAYS}天`}</div>
+                                                                <button type="button" title="點一下試聽"
+                                                                    onClick={() => { const c = ensureAudio(); if (c) sx.play(c); }}
+                                                                    className="flex items-center gap-1.5 bg-white border-2 border-pink-200 hover:border-pink-400 rounded-xl px-2.5 py-1.5 text-sm font-bold text-pink-700 shadow-sm transition">
+                                                                    <span className="text-lg">{sx.icon}</span>{sx.name}
+                                                                </button>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+
                                                 {/* 新增表情包 - 分類選擇器 */}
                                                 <div className="space-y-2">
                                                     <div className="text-xs font-bold text-purple-600">第 {unlockEmojis.length + 1} 個表情（{getUnlockDay('emoji', unlockEmojis.length, [...unlockEmojis, '·'])} 天解鎖）― 點選加入：</div>
@@ -2171,6 +2292,7 @@
                                                                         {isLeaveToday ? '取消請假' : '設為請假'}
                                                                     </button>
                                                                 )}
+                                                                <div className="w-full text-center text-[10px] py-0.5 rounded font-bold bg-pink-100 text-pink-600">🔊 音效 {getUnlockedSounds(stat.streak).length}/{SFX.length}</div>
                                                                 {/* 解鎖進度提示 */}
                                                                 {rewards.total > 0 && (
                                                                     <div className={`w-full text-center text-[10px] py-1 rounded font-bold leading-tight ${hasUnlocked ? 'bg-purple-100 text-purple-600' : 'bg-slate-100 text-slate-400'}`}>
@@ -2418,20 +2540,42 @@
                                         </div>
                                     </div>
                                     
-                                    <div className="flex items-center gap-2 self-end sm:self-auto">
+                                    <div className="flex items-center gap-2 self-end sm:self-auto flex-wrap justify-end">
+                                        <div className="flex items-center gap-1.5 mr-1" title="選取文字後點顏色；沒選取時，之後輸入的字會用該顏色">
+                                            <span className="text-white/60 text-xs font-sans font-bold hidden sm:inline">字色</span>
+                                            {CHALK_COLORS.map(col => (
+                                                <button key={col.c} type="button" className="chalk-swatch" style={{ backgroundColor: col.c }}
+                                                    title={`${col.name}色`}
+                                                    onMouseDown={(e) => e.preventDefault()}
+                                                    onClick={() => applyChalkColor(col.c)} />
+                                            ))}
+                                        </div>
                                         <button onClick={() => setContactFontSize(s => Math.max(16, s - 4))} className="text-white/70 hover:text-white border border-white/30 hover:border-white/80 rounded px-2 py-0.5 text-xs sm:text-sm transition font-sans font-bold" title="縮小字體">A-</button>
                                         <button onClick={() => setContactFontSize(s => Math.min(100, s + 4))} className="text-white/70 hover:text-white border border-white/30 hover:border-white/80 rounded px-2 py-0.5 text-xs sm:text-sm transition font-sans font-bold" title="放大字體">A+</button>
                                     </div>
                                 </div>
 
-                                {/* 文字輸入區 */}
-                                <textarea 
-                                    className="w-full flex-1 bg-transparent resize-none outline-none leading-relaxed chalk-font text-white placeholder-white/30 custom-scrollbar mb-2" 
-                                    style={{ fontSize: `${contactFontSize / 16}rem` }}
-                                    placeholder="老師在此輸入聯絡事項..." 
-                                    value={contactBookContent} 
-                                    onChange={(e) => setContactBookContent(e.target.value)}
-                                ></textarea>
+                                {/* 文字輸入區：可編輯的富文字，選取文字後可個別更換顏色 */}
+                                <div
+                                    ref={(el) => {
+                                        if (el && !el.dataset.init) { el.innerHTML = contactBookContent; el.dataset.init = '1'; }
+                                        contactEditorRef.current = el;
+                                    }}
+                                    contentEditable
+                                    suppressContentEditableWarning
+                                    spellCheck={false}
+                                    data-placeholder="老師在此輸入聯絡事項..."
+                                    className="chalk-editor w-full flex-1 min-h-0 bg-transparent outline-none leading-relaxed chalk-font text-white custom-scrollbar mb-2"
+                                    style={{ fontSize: `${contactFontSize / 16}rem`, caretColor: '#fff' }}
+                                    onInput={syncContactBook}
+                                    onBlur={syncContactBook}
+                                    onPaste={(e) => {
+                                        // 貼上一律轉為純文字，避免帶入黑色或其他來源的樣式
+                                        e.preventDefault();
+                                        const t = (e.clipboardData || window.clipboardData).getData('text/plain');
+                                        document.execCommand('insertText', false, t);
+                                    }}
+                                ></div>
                                 
                                 {/* 餵食按鈕 */}
                                 <div className="mt-auto pt-3 border-t border-white/20 shrink-0">
@@ -2646,7 +2790,7 @@
                                         <div key={k} className="flex items-center gap-2">
                                             <span className="text-4xl sm:text-5xl lg:text-7xl drop-shadow">{it.kind === 'emoji' ? it.value : it.value.icon}</span>
                                             <span className="text-lg sm:text-xl lg:text-4xl font-black drop-shadow">
-                                                {it.kind === 'emoji' ? '解鎖新表情！' : `解鎖動作「${it.value.name}」！`}
+                                                {it.kind === 'emoji' ? '解鎖新表情！' : it.kind === 'sound' ? `解鎖音效「${it.value.name}」！` : `解鎖動作「${it.value.name}」！`}
                                             </span>
                                         </div>
                                     ))}
