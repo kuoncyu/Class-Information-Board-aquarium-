@@ -583,7 +583,12 @@
             // --- 魚種與連續餵食紀錄 ---
             const [fishStats, setFishStats] = useState(() => {
                 const saved = localStorage.getItem('fish_stats_v40');
-                if (saved) return JSON.parse(saved);
+                if (saved) {
+                    // 清掉舊版「夥伴(園丁鰻)」留在儲存資料裡的欄位
+                    const parsed = JSON.parse(saved);
+                    Object.keys(parsed).forEach(k => { if (parsed[k] && 'partner' in parsed[k]) delete parsed[k].partner; });
+                    return parsed;
+                }
                 
                 // 允許繼承舊版的連續天數與魚種
                 const oldSaved = localStorage.getItem('fish_stats_v38');
@@ -720,7 +725,7 @@
                 setTimeout(() => {
                     next.items.forEach((it, k) => setTimeout(() => {
                         if (it.kind === 'emoji') showFloatingEmoji(next.num, it.value);
-                        else playFishAction(next.num, it.value.id);
+                        else if (it.kind === 'action') playFishAction(next.num, it.value.id);
                     }, k * 1200));
                 }, 500);
                 setTimeout(() => {
@@ -738,10 +743,25 @@
                 playNextUnlock();
             };
 
+            // ★ 互動門檻：今天「真的吃到飼料」之後，這隻魚才能被拖曳 / 點擊 / 施放表情與動作。
+            //   (飼料投放後、被吃掉之前，魚正在追飼料，任何互動都會干擾牠)
+            const todayStrRef = useRef('');
+            todayStrRef.current = getTodayStr(adjustedNow);
+            const canInteract = (num) => {
+                const st = fishStatsRef.current[num];
+                const fish = fishesLogic.current[num];
+                if (!st || !fish) return false;
+                if (st.lastFed !== todayStrRef.current) return false;           // 今天還沒吃到飼料
+                if (fish.state === 'seek' || fish.state === 'dead') return false; // 正在追飼料 / 已死亡
+                return true;
+            };
+
             // ★ 單隻魚拖曳：移動超過 6px 視為拖曳，否則視為點擊
             const handleFishPointerDown = (e, num) => {
                 const fish = fishesLogic.current[num];
                 if (!fish || fish.state === 'dead') return;
+                // 今天還沒吃到飼料：不能拖曳、點擊也沒有表情/動作
+                if (!canInteract(num)) return;
                 if (e.pointerType === 'mouse' && e.button !== 0) return;
                 e.stopPropagation();
                 const el = e.currentTarget;
@@ -813,7 +833,8 @@
                         const pool = [...r.emojis.map(v => ({ kind: 'emoji', v })), ...r.actions.map(v => ({ kind: 'action', v }))];
                         if (pool.length === 0) { scheduleNext(num); return; }
                         // 正在吃東西 / 被拖曳 / 已死亡時先不施放，10 秒後再試
-                        if (!fish || ['seek', 'drag', 'dead'].includes(fish.state)) { scheduleNext(num, 10000); return; }
+                        // 今天還沒吃到飼料 → 不施放任何表情/動作；吃到之後才恢復
+                        if (!canInteract(num) || ['drag'].includes(fish.state)) { scheduleNext(num, 10000); return; }
                         const pick = pool[Math.floor(Math.random() * pool.length)];
                         if (pick.kind === 'emoji') showFloatingEmoji(num, pick.v);
                         else playFishAction(num, pick.v.id);
@@ -1441,7 +1462,7 @@
 
                 setFishStats(prev => {
                     const todayStr = getTodayStr(adjustedNow);
-                    const stat = prev[num];
+                    let stat = prev[num];
                     if (!stat) return prev;
 
                     let newStreak = stat.streak;
@@ -2482,7 +2503,7 @@
                             </div>
                             
                             {/* 水族箱本體 */}
-                            <div className="flex-1 relative overflow-hidden bg-gradient-to-b from-cyan-300 via-blue-500 to-blue-900">
+                            <div id="aquarium-area" className="flex-1 relative overflow-hidden bg-gradient-to-b from-cyan-300 via-blue-500 to-blue-900">
                                 {/* 光線折射裝飾 */}
                                 <div className="absolute top-0 left-0 w-full h-32 bg-gradient-to-b from-white/30 to-transparent pointer-events-none z-10"></div>
                                 
@@ -2534,7 +2555,7 @@
                                             key={`fish-${num}`} 
                                             id={`fish-container-${num}`}
                                             className="fish-container flex flex-col items-center justify-center filter drop-shadow-lg transition-opacity duration-500 select-none"
-                                            style={{ zIndex: 10 + (num % 5), opacity: isDead ? 0.7 : 0.95, touchAction: 'none', cursor: isDead ? 'default' : 'grab' }}
+                                            style={{ zIndex: 10 + (num % 5), opacity: isDead ? 0.7 : 0.95, touchAction: (stat.lastFed === getTodayStr(adjustedNow) && !isDead) ? 'none' : 'auto', cursor: (stat.lastFed === getTodayStr(adjustedNow) && !isDead) ? 'grab' : 'default' }}
                                             onPointerDown={(e) => handleFishPointerDown(e, num)}
                                             onPointerMove={(e) => handleFishPointerMove(e, num)}
                                             onPointerUp={(e) => handleFishPointerEnd(e, num)}
@@ -2595,7 +2616,7 @@
                                     <div 
                                         key={food.id}
                                         id={food.id}
-                                        className={`food-base z-20 ${!food.icon ? 'food-pellet' : 'text-2xl sm:text-3xl filter drop-shadow-md'}`}
+                                        className={`food-base z-20 ${!food.icon ? `food-pellet` : 'text-2xl sm:text-3xl filter drop-shadow-md'}`}
                                     >
                                         {food.icon ? food.icon : null}
                                     </div>
@@ -2625,7 +2646,7 @@
                                         <div key={k} className="flex items-center gap-2">
                                             <span className="text-4xl sm:text-5xl lg:text-7xl drop-shadow">{it.kind === 'emoji' ? it.value : it.value.icon}</span>
                                             <span className="text-lg sm:text-xl lg:text-4xl font-black drop-shadow">
-                                                解鎖{it.kind === 'emoji' ? '新表情' : `動作「${it.value.name}」`}！
+                                                {it.kind === 'emoji' ? '解鎖新表情！' : `解鎖動作「${it.value.name}」！`}
                                             </span>
                                         </div>
                                     ))}
