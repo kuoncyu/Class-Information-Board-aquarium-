@@ -436,7 +436,7 @@
             { id: 'cheer',  name: '歡呼',     icon: '🎉', play: (c) => { tone(c, { type: 'triangle', f0: 523, dur: 0.12 }); tone(c, { type: 'triangle', f0: 659, t: 0.1, dur: 0.12 }); tone(c, { type: 'triangle', f0: 784, t: 0.2, dur: 0.12 }); tone(c, { type: 'triangle', f0: 1047, t: 0.3, dur: 0.35 }); tone(c, { f0: 2093, f1: 2637, t: 0.35, dur: 0.2, vol: 0.07 }); } },
         ];
         const getUnlockedSounds = (streak) => SFX.slice(0, Math.min(SFX.length, 1 + Math.floor((streak || 0) / SOUND_UNLOCK_DAYS)));
-        // ★ 班級里程碑：偵測目前所有同學的餵食天數(各自連續餵食天數)加總 = 全班總餵食天數，每滿 1000 天解鎖 1 種班級隊形。
+        // ★ 班級里程碑：偵測目前所有同學的餵食天數(各自連續餵食天數)加總 = 全班總餵食天數，每滿 800 天解鎖 1 種班級隊形。
         //   有同學忘記餵食而中斷 → 他的連續天數歸零 → 總天數下降 → 超過門檻不足的隊形會再次鎖定
         const CLASS_FORMATIONS = [
             { id: 'line',   name: '列隊',     icon: '📏', desc: '全班排成整齊的隊伍' },
@@ -447,7 +447,7 @@
             { id: 'spiral', name: '螺旋漩渦', icon: '🌀', desc: '旋轉成一個螺旋漩渦' },
             { id: 'wave',   name: '波浪',     icon: '🌊', desc: '像人浪一樣一波一波起伏' },
         ];
-        const CLASS_UNLOCK_STEP = 1000;   // 全班總餵食天數每滿 1000 天，解鎖 1 種隊形(依序)
+        const CLASS_UNLOCK_STEP = 800;   // 全班總餵食天數每滿 800 天，解鎖 1 種隊形(依序)
         const FORMATION_DURATION = 26000; // 每次隊形表演 26 秒 (最後 2.5 秒解散)
         // 回傳第 i 位成員(共 n 位)在第 t 秒的目標位置(%)與朝向；A = 水族箱寬/高，用來決定排幾列
         const formationTarget = (id, i, n, t, A) => {
