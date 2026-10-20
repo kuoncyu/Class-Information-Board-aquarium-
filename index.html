@@ -979,6 +979,8 @@
             // 開始一場隊形表演：有魚正在追飼料時不開始，已死亡的魚不參加
             const startFormation = (id) => {
                 if (classFormRef.current) return 'busy';
+                // 有飼料正在飄落(含還在泡泡裡)時不表演，避免干擾魚追飼料
+                if (Object.values(foodsLogic.current).some(fd => fd.state === 'falling' || fd.state === 'bubbled')) return 'food';
                 const members = [];
                 for (let n = 1; n <= 26; n++) {
                     const f = fishesLogic.current[n];
@@ -1365,6 +1367,11 @@
                     // ★ 班級隊形：算出這一幀的隊形時間與水族箱長寬比；表演結束就解散
                     let formCtx = null;
                     const formNow = classFormRef.current;
+                    if (formNow && !formNow.aborted && Object.values(foodsLogic.current).some(fd => fd.state === 'falling' || fd.state === 'bubbled')) {
+                        // 表演中途有人投飼料：立刻進入最後 2.5 秒的解散階段，讓魚去追飼料
+                        formNow.start = performance.now() - formNow.dur + 2500;
+                        formNow.aborted = true;
+                    }
                     if (formNow) {
                         const el = performance.now() - formNow.start;
                         if (el >= formNow.dur) {
@@ -2849,22 +2856,33 @@
 
                         {/* 右：全新專屬座號水族箱 */}
                         <div className="w-full lg:w-[35%] rounded-2xl flex flex-col overflow-hidden shadow-xl relative min-h-[40vh] lg:h-full shrink-0 lg:shrink mb-6 lg:mb-0 border border-blue-300">
-                            {/* 水族箱頂部標題 */}
-                            <div className="bg-gradient-to-r from-blue-700 to-cyan-600 p-2 sm:p-3 text-white text-center font-bold text-sm sm:text-lg shadow-md z-20 flex justify-between items-center px-2 sm:px-4 shrink-0">
-                                <div className="flex items-center gap-2 truncate">
-                                    <span className="truncate">🌊 水族箱</span>
-                                    <button onClick={() => setShowFishIds(!showFishIds)} className="bg-white/20 hover:bg-white/30 rounded px-2 py-0.5 text-[10px] sm:text-xs transition shrink-0 shadow-sm" title={showFishIds ? "隱藏座號" : "顯示座號"}>
+                            {/* 水族箱頂部標題 (兩行：標題與餵食進度 / 功能按鈕) */}
+                            <div className="bg-gradient-to-r from-blue-700 to-cyan-600 text-white font-bold shadow-md z-20 flex flex-col gap-2 sm:gap-2.5 px-3 sm:px-4 py-2.5 sm:py-3 shrink-0">
+                                <div className="flex items-center justify-between gap-2">
+                                    <span className="text-lg sm:text-xl lg:text-2xl truncate">🌊 水族箱</span>
+                                    <span className="bg-black/20 px-3 py-1 rounded-full text-sm sm:text-base lg:text-lg border border-white/20 shrink-0 tabular-nums">餵食: {completedCount}/{26 - leaveCount}</span>
+                                </div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <button onClick={() => setShowFishIds(!showFishIds)} className="bg-white/20 hover:bg-white/30 rounded-lg px-3 py-1.5 text-sm sm:text-base lg:text-lg transition shrink-0 shadow-sm" title={showFishIds ? "隱藏座號" : "顯示座號"}>
                                         {showFishIds ? '🙈 隱藏號碼' : '👁️ 顯示號碼'}
                                     </button>
-                                    <button onClick={() => setShowFeedDays(!showFeedDays)} className="bg-white/20 hover:bg-white/30 rounded px-2 py-0.5 text-[10px] sm:text-xs transition shrink-0 shadow-sm" title={showFeedDays ? "隱藏餵食天數" : "顯示餵食天數"}>
+                                    <button onClick={() => setShowFeedDays(!showFeedDays)} className="bg-white/20 hover:bg-white/30 rounded-lg px-3 py-1.5 text-sm sm:text-base lg:text-lg transition shrink-0 shadow-sm" title={showFeedDays ? "隱藏餵食天數" : "顯示餵食天數"}>
                                         {showFeedDays ? '📅 隱藏天數' : '📅 顯示天數'}
                                     </button>
-                                    <button onClick={() => setShowMilestone(true)} className="bg-white/20 hover:bg-white/30 rounded px-2 py-0.5 text-[10px] sm:text-xs transition shrink-0 shadow-sm" title="班級里程碑：全班總餵食天數解鎖隊形">
-                                        🏆 {classStatus.broken.length > 0 ? '🔒' : `${classStatus.unlocked.length}/${CLASS_FORMATIONS.length}`}
+                                    <button onClick={() => setShowMilestone(true)} className="bg-white/20 hover:bg-white/30 rounded-lg px-3 py-1.5 text-sm sm:text-base lg:text-lg transition shadow-sm" title="班級里程碑：全班總餵食天數 / 下一個解鎖的隊形還差幾天（點開看詳細）">
+                                        {(() => {
+                                            const cs = classStatus;
+                                            const ni = CLASS_FORMATIONS.findIndex((f, i) => cs.total < cs.needs[i]);
+                                            return (
+                                                <span>
+                                                    🏆 全班 {cs.total} 天・{ni >= 0 ? `${CLASS_FORMATIONS[ni].icon}${CLASS_FORMATIONS[ni].name} 剩 ${cs.needs[ni] - cs.total} 天` : '隊形全解鎖'}{cs.broken.length > 0 ? ' ⚠️' : ''}
+                                                </span>
+                                            );
+                                        })()}
                                     </button>
                                 </div>
-                                <span className="bg-black/20 px-2 py-0.5 rounded-full text-[10px] sm:text-xs border border-white/20 shrink-0">餵食: {completedCount}/{26 - leaveCount}</span>
                             </div>
+                            
                             
                             {/* 水族箱本體 */}
                             <div id="aquarium-area" className="flex-1 relative overflow-hidden bg-gradient-to-b from-cyan-300 via-blue-500 to-blue-900">
@@ -3012,7 +3030,7 @@
                         const tryPlay = (id) => {
                             const r = startFormation(id);
                             if (r === 'ok') setShowMilestone(false);
-                            else if (r === 'seek') flash('有魚正在追飼料，等牠們吃完再表演吧');
+                            else if (r === 'seek' || r === 'food') flash('有飼料正在飄落或魚正在追飼料，等吃完再表演吧');
                             else if (r === 'busy') flash('目前正在表演中');
                             else flash('可以參加的魚太少了');
                         };
