@@ -743,8 +743,11 @@
 
             // 控制是否顯示魚的座號
             const [showFishIds, setShowFishIds] = useState(() => localStorage.getItem('show_fish_ids') !== 'false');
-            // ★ 控制是否顯示每隻魚的累積餵食天數
-            const [showFeedDays, setShowFeedDays] = useState(() => localStorage.getItem('show_feed_days') === 'true');
+            // ★ 寵物暱稱：{ 座號: 暱稱 }，另存一個 key，不受「重置初始狀態」影響
+            const [nicknames, setNicknames] = useState(() => {
+                try { return JSON.parse(localStorage.getItem('fish_nicknames_v1')) || {}; } catch (e) { return {}; }
+            });
+            const [showNicknames, setShowNicknames] = useState(() => localStorage.getItem('show_fish_nicknames') === 'true');
 
             const [foodsState, setFoodsState] = useState([]); 
             // 聯絡事項改為「圖文字色」富文字(HTML)儲存；舊版純文字會自動轉換
@@ -791,7 +794,10 @@
             useEffect(() => localStorage.setItem('fish_stats_v40', JSON.stringify(fishStats)), [fishStats]);
             useEffect(() => localStorage.setItem('school_days_v40', JSON.stringify(schoolDays)), [schoolDays]);
             useEffect(() => localStorage.setItem('show_fish_ids', showFishIds), [showFishIds]); 
-            useEffect(() => localStorage.setItem('show_feed_days', showFeedDays), [showFeedDays]);
+            useEffect(() => localStorage.setItem('fish_nicknames_v1', JSON.stringify(nicknames)), [nicknames]);
+            useEffect(() => localStorage.setItem('show_fish_nicknames', showNicknames), [showNicknames]);
+            // 關閉設定視窗後，暱稱分頁一律退回，下次要再輸入密碼才能進入
+            useEffect(() => { if (!isSettingsOpen && settingsTab === 'nicknames') setSettingsTab('schedule'); }, [isSettingsOpen, settingsTab]);
             useEffect(() => localStorage.setItem('unlock_emojis_v1', JSON.stringify(unlockEmojis)), [unlockEmojis]);
             useEffect(() => { unlockEmojisRef.current = unlockEmojis; }, [unlockEmojis]);
 
@@ -865,11 +871,15 @@
                 }, 2000);
             };
             const announceUnlocks = (num, oldStreak, newStreak) => {
+                const items = [];
+                // 成功長大一階 (每 10 能量一階)
+                const gFrom = Math.floor((oldStreak || 0) / 10), gTo = Math.floor((newStreak || 0) / 10);
+                if (gTo > gFrom) items.push({ kind: 'grow', stage: gTo });
                 const seq = buildUnlockSequence(unlockEmojisRef.current || []);
                 const from = Math.floor((oldStreak || 0) / UNLOCK_INTERVAL_DAYS);
                 const to = Math.min(seq.length, Math.floor((newStreak || 0) / UNLOCK_INTERVAL_DAYS));
-                const items = to > from ? seq.slice(from, to) : [];
-                // 每 50 天解鎖一個新音效
+                if (to > from) items.push(...seq.slice(from, to));
+                // 每 50 能量解鎖一個新音效
                 const sFrom = Math.min(SFX.length - 1, Math.floor((oldStreak || 0) / SOUND_UNLOCK_DAYS));
                 const sTo = Math.min(SFX.length - 1, Math.floor((newStreak || 0) / SOUND_UNLOCK_DAYS));
                 for (let k = sFrom + 1; k <= sTo; k++) items.push({ kind: 'sound', value: SFX[k] });
@@ -979,8 +989,8 @@
             // 開始一場隊形表演：有魚正在追飼料時不開始，已死亡的魚不參加
             const startFormation = (id) => {
                 if (classFormRef.current) return 'busy';
-                // 有飼料正在飄落(含還在泡泡裡)時不表演，避免干擾魚追飼料
-                if (Object.values(foodsLogic.current).some(fd => fd.state === 'falling' || fd.state === 'bubbled')) return 'food';
+                // 只要水族箱裡還有飼料(飄落中、泡泡中、或躺在水底還沒被吃掉)，表演就鎖定
+                if (Object.keys(foodsLogic.current).length > 0) return 'food';
                 const members = [];
                 for (let n = 1; n <= 26; n++) {
                     const f = fishesLogic.current[n];
@@ -996,6 +1006,23 @@
                 }
                 const rank = {};
                 members.forEach((n, i) => { rank[n] = i; });
+                // ★ 表演一觸發：立即解除所有魚的活動限制 (拖曳、動作、發呆、追逐、閃避…)，全員立刻前往隊形位置
+                const dr = dragRef.current;
+                if (dr) {
+                    dragRef.current = null;
+                    try { dr.el.releasePointerCapture(dr.pointerId); } catch (err) {}
+                    dr.el.classList.remove('dragging');
+                }
+                members.forEach(n => {
+                    const f = fishesLogic.current[n];
+                    f.state = 'wander';
+                    f.action = null;
+                    f.idleTimer = 0;
+                    f.targetFishId = null;
+                    f.interactionCooldown = FORMATION_DURATION;
+                    f.pendingSeekFood = null;
+                    ACTION_CLASSES.forEach(c => { const a = document.getElementById(`fish-act-${n}`); if (a) a.classList.remove(c); });
+                });
                 classFormRef.current = { id, start: performance.now(), dur: FORMATION_DURATION, members, rank };
                 return 'ok';
             };
@@ -1367,11 +1394,6 @@
                     // ★ 班級隊形：算出這一幀的隊形時間與水族箱長寬比；表演結束就解散
                     let formCtx = null;
                     const formNow = classFormRef.current;
-                    if (formNow && !formNow.aborted && Object.values(foodsLogic.current).some(fd => fd.state === 'falling' || fd.state === 'bubbled')) {
-                        // 表演中途有人投飼料：立刻進入最後 2.5 秒的解散階段，讓魚去追飼料
-                        formNow.start = performance.now() - formNow.dur + 2500;
-                        formNow.aborted = true;
-                    }
                     if (formNow) {
                         const el = performance.now() - formNow.start;
                         if (el >= formNow.dur) {
@@ -1381,13 +1403,54 @@
                                     ff.state = 'wander';
                                     ff.wanderAngle = Math.atan2(ff.hy || 0, ff.hx || 1);
                                     ff.vx = Math.cos(ff.wanderAngle) * 0.03; ff.vy = Math.sin(ff.wanderAngle) * 0.03;
+                                    // 表演中有人投了飼料：表演一結束，這隻魚立刻衝向自己的飼料
+                                    if (ff.pendingSeekFood && foodsLogic.current[ff.pendingSeekFood]) {
+                                        ff.state = 'seek';
+                                        ff.targetFoodId = ff.pendingSeekFood;
+                                    }
                                 }
+                                if (ff) ff.pendingSeekFood = null;
                             });
                             classFormRef.current = null;
                         } else {
                             const aqEl = document.getElementById('aquarium-area');
                             const A = aqEl && aqEl.clientHeight ? aqEl.clientWidth / aqEl.clientHeight : 1.2;
-                            formCtx = { id: formNow.id, t: el / 1000, n: formNow.members.length, A, ease: Math.min(1, el / 3000, (formNow.dur - el) / 2500) };
+                            formCtx = { id: formNow.id, t: el / 1000, n: formNow.members.length, A, ease: Math.min(1, el / 1200, (formNow.dur - el) / 2500) };
+                        }
+                    }
+
+                    // ★ 卡住偵測：兩隻魚持續貼在一起超過 5 秒，立即朝反方向分開
+                    {
+                        const stuckT = updateLoop._stuck || (updateLoop._stuck = {});
+                        const STUCK_DIST = 5, STUCK_MS = 5000;
+                        const inFormNow = classFormRef.current ? classFormRef.current.rank : null;
+                        const free = (f, n) => f && f.state !== 'dead' && f.state !== 'drag' && f.state !== 'seek' && !(inFormNow && inFormNow[n] !== undefined);
+                        for (let a = 1; a <= 26; a++) {
+                            const fa = fishes[a];
+                            for (let b = a + 1; b <= 26; b++) {
+                                const fb = fishes[b];
+                                const key = a * 100 + b;
+                                if (!free(fa, a) || !free(fb, b)) { delete stuckT[key]; continue; }
+                                const sx = fa.x - fb.x, sy = fa.y - fb.y;
+                                const sd = Math.hypot(sx, sy);
+                                if (sd >= STUCK_DIST) { delete stuckT[key]; continue; }
+                                stuckT[key] = (stuckT[key] || 0) + safeDt;
+                                if (stuckT[key] >= STUCK_MS) {
+                                    delete stuckT[key];
+                                    const base = sd > 0.01 ? Math.atan2(sy, sx) : Math.random() * Math.PI * 2;
+                                    const apply = (f, ang) => {
+                                        f.state = 'evade';
+                                        f.idleTimer = 2000;
+                                        f.wanderAngle = ang;
+                                        f.action = null;
+                                        f.vx = Math.cos(ang) * 0.06;
+                                        f.vy = Math.sin(ang) * 0.06;
+                                        f.interactionCooldown = 5000;
+                                    };
+                                    apply(fa, base);
+                                    apply(fb, base + Math.PI);
+                                }
+                            }
                         }
                     }
 
@@ -1730,19 +1793,7 @@
                             bonusTriggered = true;
                         }
 
-                        // 成長慶祝：當 streak 跨越 10 的倍數時，噴發大量彩帶 (含額外獎勵跳兩階的情況)
-                        const prevMilestone = Math.floor(stat.streak / 10);
-                        const newMilestone = Math.floor(newStreak / 10);
-                        if (newMilestone > prevMilestone && stat.lastFed !== todayStr) {
-                            confetti({
-                                particleCount: 150,
-                                spread: 80,
-                                origin: { y: 0.6 },
-                                colors: ['#4ade80', '#fbbf24', '#60a5fa', '#f87171', '#c084fc']
-                            });
-                        }
-
-                        // ★ 跨過 30 天門檻 → 解鎖新的表情或動作：彈窗 + 煙火
+                        // ★ 長大一階 / 跨過 30 能量門檻解鎖表情動作 / 50 能量解鎖音效：彈窗 + 煙火 (2 秒後淡出)
                         if (stat.lastFed !== todayStr) announceUnlocks(num, stat.streak, newStreak);
                         // 吃到飼料的開心音效
                         if (stat.lastFed !== todayStr) playEatSound(stat.streak, newStreak);
@@ -1778,6 +1829,7 @@
                     delete foodsLogic.current[foodId];
                     setFoodsState(prev => prev.filter(f => f.id !== foodId));
                 }
+                if (fishesLogic.current[num]) fishesLogic.current[num].pendingSeekFood = null;
                 if (fishesLogic.current[num] && fishesLogic.current[num].state === 'seek') {
                     fishesLogic.current[num].state = 'wander';
                 }
@@ -2002,8 +2054,13 @@
                 setFoodsState(prev => [...prev, { id: newFoodId, icon: specialFood }]);
 
                 if (fishesLogic.current[num]) {
-                    fishesLogic.current[num].state = 'seek';
-                    fishesLogic.current[num].targetFoodId = newFoodId;
+                    if (classFormRef.current && classFormRef.current.rank[num] !== undefined) {
+                        // 正在隊形表演：魚繼續表演，等表演結束再衝向飼料
+                        fishesLogic.current[num].pendingSeekFood = newFoodId;
+                    } else {
+                        fishesLogic.current[num].state = 'seek';
+                        fishesLogic.current[num].targetFoodId = newFoodId;
+                    }
                 }
             };
 
@@ -2101,9 +2158,9 @@
                                                         for(let i=1; i<=26; i++) if(n[i]) n[i] = applyManualStreak(n[i], simulatedStreakInput);
                                                         return n;
                                                     });
-                                                    alert('✅ 設定成功！天數已成功模擬。');
+                                                    alert('✅ 設定成功！能量已成功模擬。');
                                                 } else if (authModal.action === 'export') {
-                                                    const header = '座號,魚種,餵食天數';
+                                                    const header = '座號,魚種,能量';
                                                     const rows = Array.from({length:26},(_,i)=>i+1).map(num => {
                                                         const stat = fishStatsRef.current[num] || { type:'🐠', streak:0 };
                                                         return `${num},${stat.type},${stat.streak}`;
@@ -2137,6 +2194,8 @@
                                                         setFishStats(prev => ({...prev, [num]: applyManualStreak(prev[num], value)}));
                                                         setPendingStreakEdit(null);
                                                     }
+                                                } else if (authModal.action === 'nickname') {
+                                                    setSettingsTab('nicknames');
                                                 } else if (authModal.action === 'reset') {
                                                     setFishStats(prev => {
                                                         let n = {...prev};
@@ -2210,6 +2269,7 @@
                                         <button onClick={()=>setSettingsTab('schedule')} className={`px-3 py-1.5 lg:px-4 lg:py-2 rounded-md font-bold transition text-sm lg:text-base ${settingsTab==='schedule'?'bg-white shadow text-blue-600':'text-slate-500 hover:text-slate-700'}`}>作息表</button>
                                         <button onClick={()=>setSettingsTab('reminders')} className={`px-3 py-1.5 lg:px-4 lg:py-2 rounded-md font-bold transition text-sm lg:text-base ${settingsTab==='reminders'?'bg-white shadow text-orange-600':'text-slate-500 hover:text-slate-700'}`}>小叮嚀</button>
                                         <button onClick={()=>setSettingsTab('fish')} className={`px-3 py-1.5 lg:px-4 lg:py-2 rounded-md font-bold transition text-sm lg:text-base ${settingsTab==='fish'?'bg-white shadow text-teal-600':'text-slate-500 hover:text-slate-700'}`}>🐠 魚群設定</button>
+                                        <button onClick={()=>{ if (settingsTab !== 'nicknames') setAuthModal({isOpen: true, action: 'nickname'}); }} className={`px-3 py-1.5 lg:px-4 lg:py-2 rounded-md font-bold transition text-sm lg:text-base ${settingsTab==='nicknames'?'bg-white shadow text-indigo-600':'text-slate-500 hover:text-slate-700'}`}>🏷️ 暱稱 🔒</button>
                                         <button onClick={()=>setSettingsTab('holidays')} className={`px-3 py-1.5 lg:px-4 lg:py-2 rounded-md font-bold transition text-sm lg:text-base ${settingsTab==='holidays'?'bg-white shadow text-pink-600':'text-slate-500 hover:text-slate-700'}`}>🎉 節慶特餐</button>
                                         <button onClick={()=>setSettingsTab('clock')} className={`px-3 py-1.5 lg:px-4 lg:py-2 rounded-md font-bold transition text-sm lg:text-base ${settingsTab==='clock'?'bg-white shadow text-purple-600':'text-slate-500 hover:text-slate-700'}`}>⏱️ 校時</button>
                                     </div>
@@ -2269,12 +2329,12 @@
                                             <div className="bg-teal-50 p-4 rounded-lg border border-teal-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                                                 <div>
                                                     <div className="text-teal-800 font-bold text-lg">🐟 專屬魚種與狀態設定</div>
-                                                    <div className="text-teal-600 text-sm">每連續餵食 10 天長大一階！中斷會重置天數。</div>
+                                                    <div className="text-teal-600 text-sm">每累積 10 能量長大一階！中斷會讓能量重新歸零。</div>
                                                 </div>
                                                 <div className="flex gap-2">
                                                     <div className="flex items-center gap-1 border border-blue-300 rounded px-2 bg-white">
                                                         <input type="number" min="0" max="999" value={simulatedStreakInput} onChange={e => setSimulatedStreakInput(Number(e.target.value))} className="w-12 text-center outline-none text-sm text-blue-600 font-bold" />
-                                                        <button onClick={() => setAuthModal({isOpen: true, action: 'simulate'})} className="bg-blue-50 hover:bg-blue-100 text-blue-600 px-2 py-1 text-sm font-bold transition shrink-0">模擬天數</button>
+                                                        <button onClick={() => setAuthModal({isOpen: true, action: 'simulate'})} className="bg-blue-50 hover:bg-blue-100 text-blue-600 px-2 py-1 text-sm font-bold transition shrink-0">模擬能量</button>
                                                     </div>
 
                                                     <button onClick={() => setAuthModal({isOpen: true, action: 'reset'})} className="bg-white border border-teal-300 text-teal-600 hover:bg-teal-100 px-3 py-1.5 rounded shadow-sm text-sm font-bold transition shrink-0">重置初始狀態</button>
@@ -2327,21 +2387,21 @@
                                                         }}
                                                     />
                                                 </label>
-                                                <div className="text-xs text-slate-400 self-center">格式：座號,魚種,餵食天數</div>
+                                                <div className="text-xs text-slate-400 self-center">格式：座號,魚種,能量</div>
                                             </div>
 
                                             {/* ★ 解鎖表情包管理區 */}
                                             <div className="bg-purple-50 border border-purple-200 rounded-xl p-4 space-y-3">
                                                 <div>
                                                     <div className="font-bold text-purple-800 text-base">✨ 解鎖表情包設定</div>
-                                                    <div className="text-xs text-purple-500 mt-0.5">每累積 {UNLOCK_INTERVAL_DAYS} 天解鎖一格，依序「表情 → 動作 → 表情 → 動作…」輪流解鎖。魚兒會從已解鎖的表情與動作中不定時施放（30 秒～5 分鐘一次），點一下魚也會立即展示；魚可以單獨拖曳。</div>
+                                                    <div className="text-xs text-purple-500 mt-0.5">每累積 {UNLOCK_INTERVAL_DAYS}⚡ 解鎖一格，依序「表情 → 動作 → 表情 → 動作…」輪流解鎖。魚兒會從已解鎖的表情與動作中不定時施放（30 秒～5 分鐘一次），點一下魚也會立即展示；魚可以單獨拖曳。</div>
                                                 </div>
 
                                                 {/* 有序表情清單 + 解鎖門檻標示 */}
                                                 <div className="flex flex-wrap gap-2 items-end">
                                                     {unlockEmojis.map((em, idx) => (
                                                         <div key={idx} className="flex flex-col items-center gap-1">
-                                                            <div className="text-[10px] text-purple-400 font-bold">{getUnlockDay('emoji', idx, unlockEmojis)}天</div>
+                                                            <div className="text-[10px] text-purple-400 font-bold">{getUnlockDay('emoji', idx, unlockEmojis)}⚡</div>
                                                             <div className="flex items-center gap-1 bg-white border-2 border-purple-300 rounded-xl px-2.5 py-1.5 text-2xl shadow-sm relative">
                                                                 <span className="w-6 h-6 flex items-center justify-center text-[10px] font-black text-purple-400 bg-purple-100 rounded-full shrink-0">{idx + 1}</span>
                                                                 <span>{em}</span>
@@ -2362,7 +2422,7 @@
                                                     <div className="flex flex-wrap gap-2 items-end">
                                                         {FISH_ACTIONS.map((ac, idx) => (
                                                             <div key={ac.id} className="flex flex-col items-center gap-1">
-                                                                <div className="text-[10px] text-purple-400 font-bold">{getUnlockDay('action', idx, unlockEmojis)}天</div>
+                                                                <div className="text-[10px] text-purple-400 font-bold">{getUnlockDay('action', idx, unlockEmojis)}⚡</div>
                                                                 <div className="flex items-center gap-1.5 bg-white border-2 border-indigo-200 rounded-xl px-2.5 py-1.5 text-sm font-bold text-indigo-700 shadow-sm">
                                                                     <span className="text-lg">{ac.icon}</span>{ac.name}
                                                                 </div>
@@ -2374,7 +2434,7 @@
                                                 {/* 吃到飼料音效 */}
                                                 <div className="space-y-1.5">
                                                     <div className="flex items-center justify-between flex-wrap gap-2">
-                                                        <div className="text-xs font-bold text-pink-600">🔊 吃到飼料的開心音效（預設 1 個，每 {SOUND_UNLOCK_DAYS} 天解鎖 1 個；每天吃到時從已解鎖的隨機播一個）</div>
+                                                        <div className="text-xs font-bold text-pink-600">🔊 吃到飼料的開心音效（預設 1 個，每 {SOUND_UNLOCK_DAYS}⚡ 解鎖 1 個；每天吃到時從已解鎖的隨機播一個）</div>
                                                         <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600 cursor-pointer select-none">
                                                             <input type="checkbox" checked={sfxEnabled} onChange={(e) => setSfxEnabled(e.target.checked)} />
                                                             啟用音效
@@ -2383,7 +2443,7 @@
                                                     <div className="flex flex-wrap gap-2 items-end">
                                                         {SFX.map((sx, idx) => (
                                                             <div key={sx.id} className="flex flex-col items-center gap-1">
-                                                                <div className="text-[10px] text-pink-400 font-bold">{idx === 0 ? '預設' : `${idx * SOUND_UNLOCK_DAYS}天`}</div>
+                                                                <div className="text-[10px] text-pink-400 font-bold">{idx === 0 ? '預設' : `${idx * SOUND_UNLOCK_DAYS}⚡`}</div>
                                                                 <button type="button" title="點一下試聽"
                                                                     onClick={() => { const c = ensureAudio(); if (c) sx.play(c); }}
                                                                     className="flex items-center gap-1.5 bg-white border-2 border-pink-200 hover:border-pink-400 rounded-xl px-2.5 py-1.5 text-sm font-bold text-pink-700 shadow-sm transition">
@@ -2396,7 +2456,7 @@
 
                                                 {/* 新增表情包 - 分類選擇器 */}
                                                 <div className="space-y-2">
-                                                    <div className="text-xs font-bold text-purple-600">第 {unlockEmojis.length + 1} 個表情（{getUnlockDay('emoji', unlockEmojis.length, [...unlockEmojis, '·'])} 天解鎖）― 點選加入：</div>
+                                                    <div className="text-xs font-bold text-purple-600">第 {unlockEmojis.length + 1} 個表情（{getUnlockDay('emoji', unlockEmojis.length, [...unlockEmojis, '·'])}⚡ 解鎖）― 點選加入：</div>
                                                     {[
                                                         { label: '🏆 獎勵', emojis: ['🏆','🥇','🥈','🥉','🎖️','🏅','🎗️','🎀','🎁','🎊','🎉','🎈','🎆','🎇','✨','⭐','🌟','💫','🔥','⚡'] },
                                                         { label: '💎 寶物', emojis: ['💎','💍','👑','🪄','🔮','🪙','💰','💝','💖','💗','💓','💞','❤️','🧡','💛','💚','💙','💜','🖤','🤍'] },
@@ -2485,7 +2545,7 @@
                                                                     readOnly
                                                                     onFocus={(e) => e.target.blur()}
                                                                     onClick={() => {
-                                                                        const val = parseInt(prompt(`輸入 ${num} 號的新餵食天數：`, stat.streak));
+                                                                        const val = parseInt(prompt(`輸入 ${num} 號的新能量：`, stat.streak));
                                                                         if (isNaN(val) || val < 0) return;
                                                                         setPendingStreakEdit({num, value: val});
                                                                         setAuthModal({isOpen: true, action: 'streakEdit'});
@@ -2497,7 +2557,7 @@
                                                                     className="w-6 h-6 rounded bg-slate-200 hover:bg-green-100 hover:text-green-600 font-bold text-sm flex items-center justify-center transition leading-none"
                                                                 >＋</button>
                                                             </div>
-                                                            <div className="text-[9px] text-slate-400">天數</div>
+                                                            <div className="text-[9px] text-slate-400">⚡能量</div>
                                                             
                                                             {/* 控制按鈕區 (撤銷/請假/解鎖) */}
                                                             <div className="flex flex-col gap-1 mt-1 w-full">
@@ -2523,12 +2583,59 @@
                                                                         {hasUnlocked
                                                                             ? `✨ 表情 ${rewards.emojis.length}/${rewards.emojiTotal}・動作 ${rewards.actions.length}/${FISH_ACTIONS.length}`
                                                                             : '🔒 尚未解鎖'}
-                                                                        {rewards.next && <div className="font-medium opacity-80">還 {rewards.daysToNext} 天解鎖{rewards.next.kind === 'emoji' ? '表情' : '動作'}</div>}
+                                                                        {rewards.next && <div className="font-medium opacity-80">還 {rewards.daysToNext}⚡ 解鎖{rewards.next.kind === 'emoji' ? '表情' : '動作'}</div>}
                                                                     </div>
                                                                 )}
                                                             </div>
                                                         </div>
                                                     )
+                                                })}
+                                            </div>
+                                        </div>
+                                    ) : settingsTab === 'nicknames' ? (
+                                        <div className="space-y-4">
+                                            <div className="bg-indigo-50 p-4 rounded-lg border border-indigo-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                                                <div>
+                                                    <div className="text-indigo-800 font-bold text-lg">🏷️ 寵物暱稱設定</div>
+                                                    <div className="text-indigo-600 text-sm">幫每位同學的寵物取暱稱（最多 8 個字）。暱稱只會出現在水族箱的寵物下方：同時開啟「顯示號碼」與「顯示暱稱」時顯示成「1. 阿奇」；只開暱稱就只顯示暱稱；還沒取暱稱的寵物維持顯示座號。</div>
+                                                </div>
+                                                <div className="flex flex-wrap gap-2 items-center">
+                                                    <label className="flex items-center gap-1.5 text-sm font-bold text-indigo-700 cursor-pointer select-none bg-white border border-indigo-200 rounded px-2 py-1.5">
+                                                        <input type="checkbox" checked={showNicknames} onChange={e => setShowNicknames(e.target.checked)} />
+                                                        在水族箱顯示暱稱
+                                                    </label>
+                                                    <button
+                                                        onClick={() => { if (confirm('確定要清除全部暱稱嗎？')) setNicknames({}); }}
+                                                        className="bg-white border border-indigo-300 text-indigo-600 hover:bg-indigo-100 px-3 py-1.5 rounded shadow-sm text-sm font-bold transition shrink-0"
+                                                    >清除全部</button>
+                                                </div>
+                                            </div>
+                                            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+                                                {seatNumbers.map(num => {
+                                                    const stat = fishStats[num] || { type: '🐠' };
+                                                    return (
+                                                        <div key={num} className="bg-slate-50 border p-3 rounded-lg flex flex-col items-center gap-2 hover:border-indigo-300 transition">
+                                                            <div className="font-bold text-slate-500 w-full text-left">{num}</div>
+                                                            <div className="w-14 h-14 flex items-center justify-center rounded-xl bg-gradient-to-b from-sky-100 to-sky-200 border border-sky-200">
+                                                                <FishPreview icon={stat.type} size={44} delay={(num % 8) * 0.2} />
+                                                            </div>
+                                                            <input
+                                                                type="text"
+                                                                value={nicknames[num] || ''}
+                                                                maxLength={8}
+                                                                placeholder="暱稱"
+                                                                onChange={e => {
+                                                                    const v = e.target.value;
+                                                                    setNicknames(prev => {
+                                                                        const next = { ...prev };
+                                                                        if (v === '') delete next[num]; else next[num] = v;
+                                                                        return next;
+                                                                    });
+                                                                }}
+                                                                className="w-full text-center border rounded-lg px-2 py-1.5 text-sm font-bold text-indigo-700 bg-white outline-none focus:border-indigo-400"
+                                                            />
+                                                        </div>
+                                                    );
                                                 })}
                                             </div>
                                         </div>
@@ -2805,7 +2912,7 @@
                                 <div className="mt-auto pt-3 border-t border-white/20 shrink-0">
                                     <div className="text-white/80 text-xs sm:text-sm font-bold mb-2 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-1">
                                         <span>{feedTitle}</span>
-                                        <span className="text-green-300 text-[10px] sm:text-xs">綠色:未完成 | 灰色:已完成 | 藍灰:請假</span>
+                                        <span className="text-green-300 text-[10px] sm:text-xs">綠色:未完成 | 灰色:已完成(座號.(能量⚡)) | 藍灰:請假</span>
                                     </div>
                                     <div className="grid grid-cols-7 sm:grid-cols-13 lg:grid-cols-9 xl:grid-cols-13 gap-1 sm:gap-1.5">
                                         {seatNumbers.map(num => {
@@ -2824,10 +2931,10 @@
                                                 btnDisabled = true;
                                                 btnTitle = `座號 ${num} 今日請假`;
                                             } else if (isFed) {
-                                                btnClass = "bg-white/10 text-white/30 cursor-not-allowed";
-                                                btnContent = "✓";
+                                                btnClass = "bg-white/5 text-white/35 cursor-not-allowed";
+                                                btnContent = <span className="leading-none tabular-nums whitespace-nowrap opacity-60 text-[10px] sm:text-[11px]">{num}.({stat.streak || 0}⚡)</span>;
                                                 btnDisabled = true;
-                                                btnTitle = `座號 ${num} 已餵食`;
+                                                btnTitle = `座號 ${num} 已餵食，目前能量 ${stat.streak || 0}⚡`;
                                             } else {
                                                 btnClass = "bg-green-500/90 hover:bg-green-400 text-white shadow-md active:scale-95 cursor-pointer";
                                                 btnContent = num;
@@ -2866,16 +2973,16 @@
                                     <button onClick={() => setShowFishIds(!showFishIds)} className="bg-white/20 hover:bg-white/30 rounded-lg px-3 py-1.5 text-sm sm:text-base lg:text-lg transition shrink-0 shadow-sm" title={showFishIds ? "隱藏座號" : "顯示座號"}>
                                         {showFishIds ? '🙈 隱藏號碼' : '👁️ 顯示號碼'}
                                     </button>
-                                    <button onClick={() => setShowFeedDays(!showFeedDays)} className="bg-white/20 hover:bg-white/30 rounded-lg px-3 py-1.5 text-sm sm:text-base lg:text-lg transition shrink-0 shadow-sm" title={showFeedDays ? "隱藏餵食天數" : "顯示餵食天數"}>
-                                        {showFeedDays ? '📅 隱藏天數' : '📅 顯示天數'}
+                                    <button onClick={() => setShowNicknames(!showNicknames)} className="bg-white/20 hover:bg-white/30 rounded-lg px-3 py-1.5 text-sm sm:text-base lg:text-lg transition shrink-0 shadow-sm" title={showNicknames ? "隱藏寵物暱稱" : "顯示寵物暱稱（搭配「顯示號碼」會顯示成 1. 暱稱）"}>
+                                        {showNicknames ? '🏷️ 隱藏暱稱' : '🏷️ 顯示暱稱'}
                                     </button>
-                                    <button onClick={() => setShowMilestone(true)} className="bg-white/20 hover:bg-white/30 rounded-lg px-3 py-1.5 text-sm sm:text-base lg:text-lg transition shadow-sm" title="班級里程碑：全班總餵食天數 / 下一個解鎖的隊形還差幾天（點開看詳細）">
+                                    <button onClick={() => setShowMilestone(true)} className="bg-white/20 hover:bg-white/30 rounded-lg px-3 py-1.5 text-sm sm:text-base lg:text-lg transition shadow-sm" title="班級里程碑：全班總能量 / 下一個解鎖的隊形還差多少能量（點開看詳細）">
                                         {(() => {
                                             const cs = classStatus;
                                             const ni = CLASS_FORMATIONS.findIndex((f, i) => cs.total < cs.needs[i]);
                                             return (
                                                 <span>
-                                                    🏆 全班 {cs.total} 天・{ni >= 0 ? `${CLASS_FORMATIONS[ni].icon}${CLASS_FORMATIONS[ni].name} 剩 ${cs.needs[ni] - cs.total} 天` : '隊形全解鎖'}{cs.broken.length > 0 ? ' ⚠️' : ''}
+                                                    🏆 全班總能量 {cs.total}⚡・{ni >= 0 ? `${CLASS_FORMATIONS[ni].icon}${CLASS_FORMATIONS[ni].name} 剩 ${cs.needs[ni] - cs.total}⚡` : '隊形全解鎖'}{cs.broken.length > 0 ? ' ⚠️' : ''}
                                                 </span>
                                             );
                                         })()}
@@ -2931,6 +3038,9 @@
                                     // 體型解放：每 10 天成長一次，每次增加 12px 
                                     const growthStage = Math.floor(stat.streak / 10);
                                     const fishSize = Math.min(100, 24 + growthStage * 8);
+                                    const nick = (nicknames[num] || '').trim();
+                                    const tagText = (showNicknames && nick) ? (showFishIds ? `${num}. ${nick}` : nick) : (showFishIds ? String(num) : '');
+                                    const tagVisible = tagText !== '';
                                     
                                     return (
                                         <div 
@@ -2978,17 +3088,10 @@
                                             <div className={`
                                                 text-[10px] sm:text-xs font-bold px-1.5 py-0.5 rounded-full mt-1 border whitespace-nowrap shadow-sm backdrop-blur-sm transition-all duration-500
                                                 ${isDead ? 'bg-gray-800/80 text-gray-300 border-gray-600' : isLeaveToday ? 'bg-slate-600/80 text-white/70 border-slate-500' : hasEatenToday ? 'bg-green-400/40 text-white border-green-300/40' : 'bg-black/20 text-white/70 border-white/10'}
-                                                ${showFishIds ? 'opacity-100 scale-100' : 'opacity-0 scale-0 pointer-events-none absolute -bottom-2'}
+                                                ${tagVisible ? 'opacity-100 scale-100' : 'opacity-0 scale-0 pointer-events-none absolute -bottom-2'}
                                             `}>
-                                                {num} {emoji && <span>{emoji}</span>}
+                                                {tagText || num}{emoji && <span> {emoji}</span>}
                                             </div>
-
-                                            {/* ★ 餵食天數牌 (可獨立開關顯示) */}
-                                            {showFeedDays && (
-                                                <div className="text-[9px] sm:text-[10px] font-bold px-1.5 py-0.5 rounded-full mt-0.5 border whitespace-nowrap shadow-sm backdrop-blur-sm bg-amber-400/70 text-amber-900 border-amber-300/60">
-                                                    🍚 {stat.streak || 0} 天
-                                                </div>
-                                            )}
                                         </div>
                                     );
                                 })}
@@ -3030,7 +3133,7 @@
                         const tryPlay = (id) => {
                             const r = startFormation(id);
                             if (r === 'ok') setShowMilestone(false);
-                            else if (r === 'seek' || r === 'food') flash('有飼料正在飄落或魚正在追飼料，等吃完再表演吧');
+                            else if (r === 'seek' || r === 'food') flash('水族箱裡還有飼料，等全部被吃完才能表演');
                             else if (r === 'busy') flash('目前正在表演中');
                             else flash('可以參加的魚太少了');
                         };
@@ -3043,16 +3146,16 @@
                                     </div>
                                     <div className="bg-sky-50 border border-sky-200 rounded-xl p-3 mb-3">
                                         <div className="flex items-baseline justify-between">
-                                            <span className="text-sm font-bold text-sky-700">全班總餵食天數</span>
-                                            <span className="text-2xl font-black text-sky-700 tabular-nums">{cs.total}<span className="text-xs font-bold ml-1">天</span></span>
+                                            <span className="text-sm font-bold text-sky-700">全班總能量</span>
+                                            <span className="text-2xl font-black text-sky-700 tabular-nums">{cs.total}<span className="text-base font-bold ml-1">⚡</span></span>
                                         </div>
-                                        <div className="text-[11px] text-sky-600/80 mb-2">目前 {cs.active} 位同學的餵食天數加總，每滿 {CLASS_UNLOCK_STEP} 天解鎖 1 種隊形</div>
+                                        <div className="text-[11px] text-sky-600/80 mb-2">目前 {cs.active} 位同學的能量加總，每滿 {CLASS_UNLOCK_STEP}⚡ 解鎖 1 種隊形</div>
                                         <div className="h-2.5 rounded-full bg-sky-100 overflow-hidden"><div className="h-full rounded-full bg-gradient-to-r from-sky-400 to-emerald-400 transition-all duration-700" style={{ width: `${pct}%` }}></div></div>
-                                        <div className="text-[11px] text-slate-500 mt-1">{nextNeed ? `下一個隊形「${CLASS_FORMATIONS[nextIdx].name}」還差 ${Math.max(0, nextNeed - cs.total)} 天` : '全部隊形都已達標 🎉'}</div>
+                                        <div className="text-[11px] text-slate-500 mt-1">{nextNeed ? `下一個隊形「${CLASS_FORMATIONS[nextIdx].name}」還差 ${Math.max(0, nextNeed - cs.total)}⚡` : '全部隊形都已達標 🎉'}</div>
                                     </div>
                                     {cs.broken.length > 0 && (
                                         <div className="bg-rose-50 border border-rose-200 text-rose-700 rounded-xl p-3 mb-3 text-sm font-bold">
-                                            ⚠️ {cs.broken.join('、')} 號連續餵食中斷了，他們的天數歸零，全班總天數因此減少。<span className="font-medium">不足門檻的隊形會再次鎖定，補餵後天數重新累積就會解鎖。</span>
+                                            ⚠️ {cs.broken.join('、')} 號連續餵食中斷了，他們的能量歸零，全班總能量因此減少。<span className="font-medium">不足門檻的隊形會再次鎖定，補餵後能量重新累積就會解鎖。</span>
                                         </div>
                                     )}
                                     {milestoneMsg && <div className="bg-amber-50 border border-amber-200 text-amber-700 rounded-xl px-3 py-2 mb-3 text-sm font-bold">{milestoneMsg}</div>}
@@ -3064,10 +3167,12 @@
                                                     <div className={`text-3xl ${ok ? '' : 'grayscale opacity-50'}`}>{f.icon}</div>
                                                     <div className="flex-1 min-w-0">
                                                         <div className="font-black text-slate-800 text-sm">{f.name}</div>
-                                                        <div className="text-[11px] text-slate-500">{f.desc}・全班總天數達 {cs.needs[idx]}</div>
+                                                        <div className="text-[11px] text-slate-500">{f.desc}・全班總能量達 {cs.needs[idx]}⚡</div>
                                                     </div>
                                                     {ok ? (
-                                                        <button onClick={() => tryPlay(f.id)} className="shrink-0 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold rounded-lg px-3 py-1.5 shadow">▶ 試播</button>
+                                                        foodsState.length > 0
+                                                            ? <span className="shrink-0 text-[11px] font-bold text-amber-600">🍚 有飼料，鎖定中</span>
+                                                            : <button onClick={() => tryPlay(f.id)} className="shrink-0 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold rounded-lg px-3 py-1.5 shadow">▶ 試播</button>
                                                     ) : (
                                                         <span className="shrink-0 text-[11px] font-bold text-slate-400">🔒 未解鎖</span>
                                                     )}
@@ -3091,7 +3196,8 @@
                                         </div>
                                     </div>
                                     <ul className="mt-3 text-[11px] text-slate-500 space-y-0.5 list-disc pl-4">
-                                        <li>全班總餵食天數＝所有同學目前餵食天數的加總。有同學忘記餵食而中斷，他的天數歸零，總天數減少，不足門檻的隊形會再次鎖定；請假不算中斷，從沒餵過的座號不列入。</li>
+                                        <li>全班總能量＝所有同學目前能量的加總（每天餵食 +1⚡）。有同學忘記餵食而中斷，他的能量歸零，總能量減少，不足門檻的隊形會再次鎖定；請假不算中斷，從沒餵過的座號不列入。</li>
+                                        <li>水族箱裡還有飼料時，表演會鎖定；表演中如果有人投飼料，表演會照常演完，結束後魚立刻衝去吃。</li>
                                         <li>解鎖後，魚群會每隔 2～6 分鐘不定時表演一次（每次約 26 秒）；有魚在追飼料時會等一下再開始。</li>
                                     </ul>
                                 </div>
@@ -3104,7 +3210,7 @@
                         <div className="fixed inset-x-0 bottom-[12%] z-[10001] flex justify-center pointer-events-none px-4">
                             <div key={classPopup.n} className={`class-popup text-white rounded-3xl shadow-2xl px-6 py-4 lg:px-10 lg:py-6 text-center border-4 border-white/70 max-w-[90vw] bg-gradient-to-br ${classPopup.kind === 'unlock' ? 'from-emerald-400 via-cyan-400 to-blue-500' : 'from-slate-500 via-slate-600 to-rose-600'}`}>
                                 <div className="text-sm sm:text-base lg:text-2xl font-bold tracking-widest opacity-95">
-                                    {classPopup.kind === 'unlock' ? `🏆 班級里程碑達成！全班總餵食天數 ${classPopup.total} 天` : '⚠️ 班級隊形再次鎖定'}
+                                    {classPopup.kind === 'unlock' ? `🏆 班級里程碑達成！全班總能量 ${classPopup.total}⚡` : '⚠️ 班級隊形再次鎖定'}
                                 </div>
                                 <div className="flex items-center justify-center gap-4 mt-1 lg:mt-2 flex-wrap">
                                     {classPopup.ids.map(id => { const f = CLASS_FORMATIONS.find(x => x.id === id); return f ? (
@@ -3115,7 +3221,7 @@
                                 </div>
                                 {classPopup.kind === 'lock' && (
                                     <div className="mt-1 text-xs sm:text-sm lg:text-lg font-medium opacity-90">
-                                        {classPopup.broken && classPopup.broken.length > 0 ? `${classPopup.broken.join('、')} 號連續餵食中斷了，全班總餵食天數降為 ${classPopup.total} 天` : `全班總餵食天數降為 ${classPopup.total} 天`}
+                                        {classPopup.broken && classPopup.broken.length > 0 ? `${classPopup.broken.join('、')} 號連續餵食中斷了，全班總能量降為 ${classPopup.total}⚡` : `全班總能量降為 ${classPopup.total}⚡`}
                                     </div>
                                 )}
                             </div>
@@ -3130,9 +3236,9 @@
                                 <div className="flex items-center justify-center gap-3 mt-1 lg:mt-2 flex-wrap">
                                     {unlockPopup.items.map((it, k) => (
                                         <div key={k} className="flex items-center gap-2">
-                                            <span className="text-4xl sm:text-5xl lg:text-7xl drop-shadow">{it.kind === 'emoji' ? it.value : it.value.icon}</span>
+                                            <span className="text-4xl sm:text-5xl lg:text-7xl drop-shadow">{it.kind === 'emoji' ? it.value : it.kind === 'grow' ? '🌱' : it.value.icon}</span>
                                             <span className="text-lg sm:text-xl lg:text-4xl font-black drop-shadow">
-                                                {it.kind === 'emoji' ? '解鎖新表情！' : it.kind === 'sound' ? `解鎖音效「${it.value.name}」！` : `解鎖動作「${it.value.name}」！`}
+                                                {it.kind === 'grow' ? `成功長大一階！（第 ${it.stage} 階）` : it.kind === 'emoji' ? '解鎖新表情！' : it.kind === 'sound' ? `解鎖音效「${it.value.name}」！` : `解鎖動作「${it.value.name}」！`}
                                             </span>
                                         </div>
                                     ))}
