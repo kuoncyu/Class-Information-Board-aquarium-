@@ -358,7 +358,7 @@
         // 限定小型水族生物 (新增水母與海龜)
         // ===== 版本資訊 =====
         // 版本號規則：程式「最後修改的日期」(YYYYMMDD)；同一天有多次修改時，依序接上英文 a~z（例：20261027 → 20261027a → 20261027b）
-        const APP_VERSION = '20261027d';
+        const APP_VERSION = '20261027h';
         const APP_DESIGNER = '郭柏宏';
         // ===== 班級名單：座號可跳號，上限 MAX_SEAT =====
         const MAX_SEAT = 99;
@@ -629,6 +629,86 @@
                 default: return { x: 50, y: 50, hx: 1, hy: 0 };
             }
         };
+        // ★ 下一個隊形的動畫預覽：隨機 10 隻海洋生物，用跟真正表演相同的 formationTarget 演示
+        const SEA_CREATURES = ['🐠', '🐟', '🐡', '🦐', '🦀', '🦞', '⭐', '🦑', '🐙', '🪼', '🐢', '🦈', '🐬', '🐳', '🐋'];
+        const pickSeaCreatures = (k = 10) => {
+            const a = [...SEA_CREATURES];
+            for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+            return a.slice(0, k);
+        };
+        // 有「起承轉合」的隊形（雪花、煙花）要循環播放：[每圈秒數, 播放速度倍率]；其他隊形本身就是連續循環
+        const PREVIEW_LOOP = { snow: [17, 1.6, 2], fireworks: [24, 1.6, 3] }; // 第三個數字：每圈從第幾秒開始（略過開頭的等待）
+        const FormationPreview = ({ formId, creatures }) => {
+            const stageRef = useRef(null);
+            const nodeRefs = useRef([]);
+            const spriteRefs = useRef([]);
+            const facingRefs = useRef([]);
+            useEffect(() => {
+                let raf;
+                const startT = performance.now();
+                const n = creatures.length;
+                const [cycle, speed, off] = PREVIEW_LOOP[formId] || [0, 1, 0];
+                const loop = (now) => {
+                    const stage = stageRef.current;
+                    if (stage) {
+                        const A = (stage.clientWidth / Math.max(1, stage.clientHeight)) || 1.6;
+                        const real = (now - startT) / 1000;
+                        let t = real * speed;
+                        let fade = Math.min(1, real / 0.6);
+                        if (cycle) { const ph = off + (t % (cycle - off)); fade = Math.min(fade, (ph - off) / 0.8, (cycle - ph) / 0.8); t = ph; }
+                        for (let i = 0; i < n; i++) {
+                            const el = nodeRefs.current[i], sp = spriteRefs.current[i];
+                            if (!el) continue;
+                            const tg = formationTarget(formId, i, n, t, A);
+                            el.style.left = Math.max(5, Math.min(95, tg.x)) + '%';
+                            el.style.top = Math.max(9, Math.min(93, tg.y)) + '%';
+                            el.style.opacity = Math.max(0, Math.min(1, fade));
+                            if (sp) {
+                                const icon = creatures[i];
+                                const hx = tg.hx || 1, hy = tg.hy || 0;
+                                if (FISH_IMAGES[icon]) {
+                                    const mag = Math.hypot(hx, hy) || 1;
+                                    let tilt, facing = 1;
+                                    if (FISH_UPRIGHT.includes(icon)) tilt = Math.max(-10, Math.min(10, (hx / mag) * 10));
+                                    else {
+                                        if (facingRefs.current[i] === undefined) facingRefs.current[i] = 1;
+                                        if (Math.abs(hx) / mag > 0.35) facingRefs.current[i] = hx < 0 ? -1 : 1;
+                                        facing = facingRefs.current[i];
+                                        tilt = Math.max(-30, Math.min(30, Math.atan2(hy, Math.abs(hx)) * (180 / Math.PI)));
+                                    }
+                                    sp.style.transform = `scaleX(${facing}) rotate(${tilt}deg)`;
+                                } else {
+                                    sp.style.transform = `rotate(${Math.atan2(hy, hx) * (180 / Math.PI)}deg) scaleY(${hx < 0 ? -1 : 1})`;
+                                }
+                            }
+                        }
+                    }
+                    raf = requestAnimationFrame(loop);
+                };
+                raf = requestAnimationFrame(loop);
+                return () => cancelAnimationFrame(raf);
+            }, [formId, creatures]);
+            return (
+                <div ref={stageRef} className="relative w-full aspect-[16/10] rounded-xl overflow-hidden bg-gradient-to-b from-cyan-300 via-blue-500 to-blue-900 shadow-inner">
+                    <div className="absolute top-0 left-0 w-full h-1/4 bg-gradient-to-b from-white/30 to-transparent pointer-events-none"></div>
+                    {creatures.map((icon, i) => (
+                        <div key={i} ref={el => nodeRefs.current[i] = el}
+                            style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)', opacity: 0, pointerEvents: 'none' }}>
+                            <div ref={el => spriteRefs.current[i] = el} className="fish-sprite leading-none" style={{ fontSize: '2.4rem' }}>
+                                {FISH_SPRITES[icon] ? (
+                                    <div className="sprite-anim" style={{ width: '1em', height: '1em', backgroundImage: `url(${FISH_SPRITES[icon].src})`,
+                                        '--frames': FISH_SPRITES[icon].frames, '--dur': FISH_SPRITES[icon].duration, animationDelay: `-${(i % 8) * 0.2}s` }} />
+                                ) : FISH_IMAGES[icon] ? (
+                                    <img src={FISH_IMAGES[icon]} alt="" draggable={false} style={{ width: '1em', height: '1em', objectFit: 'contain', display: 'block' }} />
+                                ) : (
+                                    <div style={getFishInnerStyle(icon)}>{icon}</div>
+                                )}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            );
+        };
         const ACTION_CLASSES = [...FISH_ACTIONS.map(a => `act-${a.id}`), 'act-poke'];
         const POKE_DUR = 600; // 還沒解鎖任何動作時，點擊魚的基本反應
         const CAST_MIN_MS = 30000;   // 隨機施放：最短 30 秒
@@ -777,6 +857,8 @@
             const rosterRef = useRef(roster);
             rosterRef.current = roster;
             const [rosterAddText, setRosterAddText] = useState('');
+            const [showNextPreview, setShowNextPreview] = useState(false);
+            const [previewCreatures, setPreviewCreatures] = useState(() => pickSeaCreatures(10));
             const [feedTileSize, setFeedTileSize] = useState(() => { const v = parseInt(localStorage.getItem('feed_tile_size_v1'), 10); return (v >= 40 && v <= 140) ? v : 68; });
             const [centerColW, setCenterColW] = useState(() => { const v = parseInt(localStorage.getItem('center_col_w_v1'), 10); return (v >= 30 && v <= 55) ? v : 40; });
             const [pendingImportData, setPendingImportData] = useState(null);
@@ -3371,17 +3453,29 @@
                                     <button onClick={() => setShowNicknames(!showNicknames)} className="bg-white/20 hover:bg-white/30 rounded-lg px-3 py-1.5 text-sm sm:text-base lg:text-lg transition shrink-0 shadow-sm" title={showNicknames ? "隱藏寵物暱稱" : "顯示寵物暱稱（搭配「顯示號碼」會顯示成 1. 暱稱）"}>
                                         {showNicknames ? '🏷️ 隱藏暱稱' : '🏷️ 顯示暱稱'}
                                     </button>
-                                    <button onClick={() => setShowMilestone(true)} className="bg-white/20 hover:bg-white/30 rounded-lg px-3 py-1.5 text-sm sm:text-base lg:text-lg transition shadow-sm" title="班級里程碑：全班總能量 / 下一個解鎖的隊形還差多少能量（點開看詳細）">
-                                        {(() => {
-                                            const cs = classStatus;
-                                            const ni = CLASS_FORMATIONS.findIndex((f, i) => cs.total < cs.needs[i]);
-                                            return (
-                                                <span>
-                                                    🏆 全班總能量 {cs.total}⚡・{ni >= 0 ? `${CLASS_FORMATIONS[ni].icon}${CLASS_FORMATIONS[ni].name} 剩 ${cs.needs[ni] - cs.total}⚡` : '隊形全解鎖'}{cs.broken.length > 0 ? ' ⚠️' : ''}
-                                                </span>
-                                            );
-                                        })()}
-                                    </button>
+                                    {(() => {
+                                        const cs = classStatus;
+                                        const ni = CLASS_FORMATIONS.findIndex((f, i) => cs.total < cs.needs[i]);
+                                        const need = ni >= 0 ? cs.needs[ni] : cs.total;
+                                        const pct = ni >= 0 ? Math.min(100, cs.total / need * 100) : 100;
+                                        return (
+                                            <div className="flex items-center gap-2 flex-1 min-w-[17rem] cursor-pointer"
+                                                onClick={() => { if (ni >= 0) { setPreviewCreatures(pickSeaCreatures(10)); setShowNextPreview(true); } else setShowMilestone(true); }}
+                                                title={ni >= 0 ? `點擊預覽「${CLASS_FORMATIONS[ni].name}」隊形的演示動畫` : '班級里程碑（點開看詳細）'}>
+                                                <button type="button" className="bg-white/20 hover:bg-white/30 rounded-lg px-3 py-1.5 text-sm sm:text-base lg:text-lg transition shrink-0 shadow-sm">
+                                                    {ni >= 0 ? '🎯 目標' : '🎉 隊形全解鎖'}
+                                                </button>
+                                                <button type="button" className="relative overflow-hidden flex-1 min-w-[9rem] rounded-lg shadow-sm transition bg-black/25 hover:bg-black/30 border border-white/25">
+                                                    <div className="absolute inset-y-0 left-0 bg-gradient-to-r from-amber-400/85 to-yellow-300/85 transition-all duration-700" style={{ width: `${pct}%` }}></div>
+                                                    <div className="relative flex items-center justify-center gap-3 px-2 py-1.5 text-sm sm:text-base lg:text-lg font-bold text-white tabular-nums whitespace-nowrap" style={{ textShadow: '0 1px 2px rgba(0,0,0,0.65)' }}>
+                                                        <span>總能量⚡ {cs.total}{ni >= 0 ? `/${need}` : ''}</span>
+                                                        <span>{pct.toFixed(1)}%</span>
+                                                        {cs.broken.length > 0 && <span>⚠️</span>}
+                                                    </div>
+                                                </button>
+                                            </div>
+                                        );
+                                    })()}
                                 </div>
                             </div>
                             
@@ -3517,6 +3611,41 @@
                     </main>
 
                     {/* ★ 班級里程碑面板 */}
+                    {showNextPreview && (() => {
+                        const cs = classStatus;
+                        const ni = CLASS_FORMATIONS.findIndex((f, i) => cs.total < cs.needs[i]);
+                        if (ni < 0) return null;
+                        const f = CLASS_FORMATIONS[ni];
+                        const need = cs.needs[ni];
+                        const pct = Math.min(100, cs.total / need * 100);
+                        return (
+                            <div className="fixed inset-0 z-[10003] bg-black/60 flex items-center justify-center p-4" onClick={() => setShowNextPreview(false)}>
+                                <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[92vh] overflow-y-auto p-4 sm:p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
+                                    <div className="flex items-center justify-between">
+                                        <h3 className="text-lg sm:text-xl font-black text-slate-800">🎯 下一目標：{f.icon} {f.name}</h3>
+                                        <button onClick={() => setShowNextPreview(false)} className="text-slate-400 hover:text-slate-700 text-xl leading-none px-1">✕</button>
+                                    </div>
+                                    <FormationPreview key={f.id + previewCreatures.join('')} formId={f.id} creatures={previewCreatures} />
+                                    <div className="text-sm text-slate-600 text-center">{f.desc}</div>
+                                    <div>
+                                        <div className="flex justify-between text-sm font-bold text-slate-700 mb-1 tabular-nums">
+                                            <span>總能量⚡ {cs.total}/{need}</span>
+                                            <span>還差 {need - cs.total}⚡　{pct.toFixed(1)}%</span>
+                                        </div>
+                                        <div className="h-3 rounded-full bg-slate-200 overflow-hidden">
+                                            <div className="h-full rounded-full bg-gradient-to-r from-amber-400 to-yellow-300 transition-all duration-700" style={{ width: `${pct}%` }}></div>
+                                        </div>
+                                    </div>
+                                    <div className="flex flex-wrap gap-2 pt-1">
+                                        <button onClick={() => setPreviewCreatures(pickSeaCreatures(10))} className="flex-1 bg-sky-100 hover:bg-sky-200 text-sky-700 font-bold py-2 rounded-xl text-sm transition">🔄 換一批生物</button>
+                                        <button onClick={() => { setShowNextPreview(false); setShowMilestone(true); }} className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-2 rounded-xl text-sm transition">📊 全部隊形進度</button>
+                                        <button onClick={() => setShowNextPreview(false)} className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-600 font-bold py-2 rounded-xl text-sm transition">關閉</button>
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })()}
+
                     {showMilestone && (() => {
                         const cs = classStatus;
                         const nextIdx = CLASS_FORMATIONS.findIndex((f, i) => cs.total < cs.needs[i]);
