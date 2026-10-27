@@ -14,10 +14,12 @@
     <script src="https://unpkg.com/@babel/standalone@7.23.10/babel.min.js"></script>
     <!-- 引入 Confetti 特效庫 -->
     <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap');
         @import url('https://fonts.googleapis.com/css2?family=Just+Another+Hand&display=swap');
+        :root { --center-w: 40%; --aqua-w: 35%; }
 
         /* 自動縮放：以 1920x1080 為基準 (1rem = 16px)，所有 rem 單位隨螢幕等比縮放 */
         @media (min-width: 1024px) {
@@ -354,6 +356,113 @@
         };
 
         // 限定小型水族生物 (新增水母與海龜)
+        // ===== 版本資訊 =====
+        // 版本號規則：程式「最後修改的日期」(YYYYMMDD)；同一天有多次修改時，依序接上英文 a~z（例：20261027 → 20261027a → 20261027b）
+        const APP_VERSION = '20261027d';
+        const APP_DESIGNER = '郭柏宏';
+        // ===== 班級名單：座號可跳號，上限 MAX_SEAT =====
+        const MAX_SEAT = 99;
+        const sanitizeRoster = (arr) => Array.from(new Set((arr || []).map(n => parseInt(n, 10)).filter(n => n >= 1 && n <= MAX_SEAT))).sort((a, b) => a - b);
+        // 解析「31」「27-30」「27~30,35」之類的座號輸入
+        const parseSeatExpr = (str) => {
+            const out = [];
+            String(str || '').split(/[\s,，、;；]+/).filter(Boolean).forEach(part => {
+                const m = part.match(/^(\d{1,2})\s*[-~～－–—]\s*(\d{1,2})$/);
+                if (m) { let a = +m[1], b = +m[2]; if (a > b) [a, b] = [b, a]; for (let n = a; n <= b; n++) out.push(n); }
+                else if (/^\d{1,2}$/.test(part)) out.push(+part);
+            });
+            return sanitizeRoster(out);
+        };
+        // 座號轉圈圈數字：1→① … 20→⑳、21→㉑ … 35→㉟（超出範圍則維持一般數字）
+        const toCircledNum = (n) => {
+            n = Number(n);
+            if (n >= 1 && n <= 20) return String.fromCodePoint(0x2460 + n - 1);
+            if (n >= 21 && n <= 35) return String.fromCodePoint(0x3251 + n - 21);
+            return String(n);
+        };
+
+        // ===== 管理員密碼：只儲存「加鹽＋多次雜湊」後的結果，原始碼與儲存空間都不會出現使用者設定的明文密碼 =====
+        const ADMIN_AUTH_KEY = 'admin_auth_v1';
+        const ADMIN_HASH_ROUNDS = 12000;
+        const DEFAULT_ADMIN_PW = [42,53,50,47,52,61].map(c => String.fromCharCode(c ^ 90)).join('');
+        const sha256Bytes = (() => {
+            const K = new Uint32Array([
+                0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+                0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+                0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+                0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+                0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+                0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+                0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+                0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
+            ]);
+            return (msg) => {
+                const l = msg.length;
+                const buf = new Uint8Array(((l + 9 + 63) >> 6) << 6);
+                buf.set(msg); buf[l] = 0x80;
+                const dv = new DataView(buf.buffer);
+                dv.setUint32(buf.length - 8, Math.floor(l * 8 / 4294967296));
+                dv.setUint32(buf.length - 4, (l * 8) >>> 0);
+                let h0 = 0x6a09e667, h1 = 0xbb67ae85, h2 = 0x3c6ef372, h3 = 0xa54ff53a, h4 = 0x510e527f, h5 = 0x9b05688c, h6 = 0x1f83d9ab, h7 = 0x5be0cd19;
+                const w = new Uint32Array(64);
+                for (let o = 0; o < buf.length; o += 64) {
+                    for (let i = 0; i < 16; i++) w[i] = dv.getUint32(o + i * 4);
+                    for (let i = 16; i < 64; i++) {
+                        const a = w[i - 15], b = w[i - 2];
+                        const s0 = ((a >>> 7) | (a << 25)) ^ ((a >>> 18) | (a << 14)) ^ (a >>> 3);
+                        const s1 = ((b >>> 17) | (b << 15)) ^ ((b >>> 19) | (b << 13)) ^ (b >>> 10);
+                        w[i] = (w[i - 16] + s0 + w[i - 7] + s1) | 0;
+                    }
+                    let a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7;
+                    for (let i = 0; i < 64; i++) {
+                        const S1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7));
+                        const ch = (e & f) ^ (~e & g);
+                        const t1 = (h + S1 + ch + K[i] + w[i]) | 0;
+                        const S0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
+                        const maj = (a & b) ^ (a & c) ^ (b & c);
+                        const t2 = (S0 + maj) | 0;
+                        h = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
+                    }
+                    h0 = (h0 + a) | 0; h1 = (h1 + b) | 0; h2 = (h2 + c) | 0; h3 = (h3 + d) | 0;
+                    h4 = (h4 + e) | 0; h5 = (h5 + f) | 0; h6 = (h6 + g) | 0; h7 = (h7 + h) | 0;
+                }
+                const out = new Uint8Array(32);
+                const odv = new DataView(out.buffer);
+                [h0, h1, h2, h3, h4, h5, h6, h7].forEach((v, i) => odv.setUint32(i * 4, v >>> 0));
+                return out;
+            };
+        })();
+        const bytesToHex = (b) => Array.from(b).map(x => x.toString(16).padStart(2, '0')).join('');
+        const hashAdminPw = (pw, saltHex, rounds) => {
+            const enc = new TextEncoder();
+            const pwB = enc.encode(pw), saltB = enc.encode(saltHex);
+            const base = new Uint8Array(saltB.length + pwB.length);
+            base.set(saltB); base.set(pwB, saltB.length);
+            let h = sha256Bytes(base);
+            for (let i = 1; i < rounds; i++) {
+                const buf = new Uint8Array(32 + base.length);
+                buf.set(h); buf.set(base, 32);
+                h = sha256Bytes(buf);
+            }
+            return bytesToHex(h);
+        };
+        const makeAdminAuth = (pw) => {
+            const salt = new Uint8Array(16);
+            (window.crypto || window.msCrypto).getRandomValues(salt);
+            const s = bytesToHex(salt);
+            return { s, h: hashAdminPw(pw, s, ADMIN_HASH_ROUNDS), n: ADMIN_HASH_ROUNDS };
+        };
+        const loadAdminAuth = () => {
+            try { const o = JSON.parse(localStorage.getItem(ADMIN_AUTH_KEY)); return (o && o.s && o.h) ? o : null; } catch (e) { return null; }
+        };
+        const checkAdminPw = (pw, auth) => {
+            const h = hashAdminPw(pw, auth.s, auth.n || ADMIN_HASH_ROUNDS);
+            if (h.length !== auth.h.length) return false;
+            let d = 0;
+            for (let i = 0; i < h.length; i++) d |= h.charCodeAt(i) ^ auth.h.charCodeAt(i);
+            return d === 0;
+        };
+
         const FISH_ICONS = ['🐠', '🐟', '🐡', '🦐', '🦀', '🦞', '⭐', '🦑', '🐙', '🪼', '🐢', '🦈', '🐬', '🐳', '🐋', '🦇', '🐉', '🐈', '🏮', '🌞'];
 
 
@@ -655,6 +764,21 @@
             // ★ 密碼輸入系統的 State (升級版)
             const [authModal, setAuthModal] = useState({ isOpen: false, action: null }); 
             const [adminPassword, setAdminPassword] = useState('');
+            const [adminAuth, setAdminAuth] = useState(() => loadAdminAuth()); // null = 此裝置尚未設定過密碼
+            const [authPhase, setAuthPhase] = useState('enter'); // 'enter' 輸入密碼 | 'setup' 設定新密碼
+            const [newPw, setNewPw] = useState('');
+            const [newPw2, setNewPw2] = useState('');
+            const [isAboutOpen, setIsAboutOpen] = useState(false);
+            // ★ 班級名單（可增刪、可跳號）與作業完成區版面設定
+            const [roster, setRoster] = useState(() => {
+                try { const a = JSON.parse(localStorage.getItem('class_roster_v1')); if (Array.isArray(a)) { const c = sanitizeRoster(a); if (c.length) return c; } } catch (e) {}
+                return Array.from({ length: 26 }, (_, i) => i + 1);
+            });
+            const rosterRef = useRef(roster);
+            rosterRef.current = roster;
+            const [rosterAddText, setRosterAddText] = useState('');
+            const [feedTileSize, setFeedTileSize] = useState(() => { const v = parseInt(localStorage.getItem('feed_tile_size_v1'), 10); return (v >= 40 && v <= 140) ? v : 68; });
+            const [centerColW, setCenterColW] = useState(() => { const v = parseInt(localStorage.getItem('center_col_w_v1'), 10); return (v >= 30 && v <= 55) ? v : 40; });
             const [pendingImportData, setPendingImportData] = useState(null);
             const [pendingStreakEdit, setPendingStreakEdit] = useState(null);
 
@@ -747,6 +871,7 @@
             const [nicknames, setNicknames] = useState(() => {
                 try { return JSON.parse(localStorage.getItem('fish_nicknames_v1')) || {}; } catch (e) { return {}; }
             });
+            const [nickBatchText, setNickBatchText] = useState('');
             const [showNicknames, setShowNicknames] = useState(() => localStorage.getItem('show_fish_nicknames') === 'true');
 
             const [foodsState, setFoodsState] = useState([]); 
@@ -759,6 +884,7 @@
             });
             const contactEditorRef = useRef(null);
             const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+            const [settingsUnlocked, setSettingsUnlocked] = useState(false); // 設定視窗每次開啟都要重新輸入密碼
             const [settingsTab, setSettingsTab] = useState('schedule');
             const [fishPicker, setFishPicker] = useState(null); // 設定頁正在換生物的座號
             
@@ -795,9 +921,29 @@
             useEffect(() => localStorage.setItem('school_days_v40', JSON.stringify(schoolDays)), [schoolDays]);
             useEffect(() => localStorage.setItem('show_fish_ids', showFishIds), [showFishIds]); 
             useEffect(() => localStorage.setItem('fish_nicknames_v1', JSON.stringify(nicknames)), [nicknames]);
+            useEffect(() => localStorage.setItem('class_roster_v1', JSON.stringify(roster)), [roster]);
+            useEffect(() => localStorage.setItem('feed_tile_size_v1', String(feedTileSize)), [feedTileSize]);
+            useEffect(() => {
+                localStorage.setItem('center_col_w_v1', String(centerColW));
+                document.documentElement.style.setProperty('--center-w', centerColW + '%');
+                document.documentElement.style.setProperty('--aqua-w', (75 - centerColW) + '%');
+            }, [centerColW]);
+            // 名單中的每個座號都要有魚與餵食狀態（新增座號、舊資料缺漏時自動補齊）
+            useEffect(() => {
+                setFishStats(prev => {
+                    let changed = false; const n = { ...prev };
+                    roster.forEach(i => { if (!n[i]) { n[i] = { type: FISH_ICONS[0], streak: 0, lastFed: '', lastFedTimestamp: 0, leaveDates: [] }; changed = true; } });
+                    return changed ? n : prev;
+                });
+                setFeedStates(prev => {
+                    let changed = false; const n = { ...prev };
+                    roster.forEach(i => { if (n[i] === undefined) { n[i] = false; changed = true; } });
+                    return changed ? n : prev;
+                });
+            }, [roster]);
             useEffect(() => localStorage.setItem('show_fish_nicknames', showNicknames), [showNicknames]);
-            // 關閉設定視窗後，暱稱分頁一律退回，下次要再輸入密碼才能進入
-            useEffect(() => { if (!isSettingsOpen && settingsTab === 'nicknames') setSettingsTab('schedule'); }, [isSettingsOpen, settingsTab]);
+            // 關閉設定視窗 → 解除鎖定，下次開啟要重新輸入管理員密碼
+            useEffect(() => { if (!isSettingsOpen) { setSettingsUnlocked(false); setNewPw(''); setNewPw2(''); } }, [isSettingsOpen]);
             useEffect(() => localStorage.setItem('unlock_emojis_v1', JSON.stringify(unlockEmojis)), [unlockEmojis]);
             useEffect(() => { unlockEmojisRef.current = unlockEmojis; }, [unlockEmojis]);
 
@@ -946,7 +1092,7 @@
             const classStatus = useMemo(() => {
                 let total = 0, active = 0;
                 const broken = [];
-                for (let n = 1; n <= 26; n++) {
+                for (const n of roster) {
                     const st = fishStats[n];
                     if (!st || excludedSeats.includes(n)) continue;
                     const noFeedYet = !st.lastFed;
@@ -960,7 +1106,7 @@
                 const needs = CLASS_FORMATIONS.map((f, i) => CLASS_UNLOCK_STEP * (i + 1));
                 const unlocked = CLASS_FORMATIONS.filter((f, i) => total >= needs[i]).map(f => f.id);
                 return { total, active, broken, needs, unlocked };
-            }, [fishStats, schoolDays, todayForClass, excludedSeats]);
+            }, [fishStats, schoolDays, todayForClass, excludedSeats, roster]);
             const classStatusRef = useRef(classStatus);
             classStatusRef.current = classStatus;
 
@@ -992,7 +1138,7 @@
                 // 只要水族箱裡還有飼料(飄落中、泡泡中、或躺在水底還沒被吃掉)，表演就鎖定
                 if (Object.keys(foodsLogic.current).length > 0) return 'food';
                 const members = [];
-                for (let n = 1; n <= 26; n++) {
+                for (const n of rosterRef.current) {
                     const f = fishesLogic.current[n];
                     if (!f) continue;
                     if (f.state === 'seek') return 'seek';
@@ -1006,23 +1152,6 @@
                 }
                 const rank = {};
                 members.forEach((n, i) => { rank[n] = i; });
-                // ★ 表演一觸發：立即解除所有魚的活動限制 (拖曳、動作、發呆、追逐、閃避…)，全員立刻前往隊形位置
-                const dr = dragRef.current;
-                if (dr) {
-                    dragRef.current = null;
-                    try { dr.el.releasePointerCapture(dr.pointerId); } catch (err) {}
-                    dr.el.classList.remove('dragging');
-                }
-                members.forEach(n => {
-                    const f = fishesLogic.current[n];
-                    f.state = 'wander';
-                    f.action = null;
-                    f.idleTimer = 0;
-                    f.targetFishId = null;
-                    f.interactionCooldown = FORMATION_DURATION;
-                    f.pendingSeekFood = null;
-                    ACTION_CLASSES.forEach(c => { const a = document.getElementById(`fish-act-${n}`); if (a) a.classList.remove(c); });
-                });
                 classFormRef.current = { id, start: performance.now(), dur: FORMATION_DURATION, members, rank };
                 return 'ok';
             };
@@ -1143,13 +1272,13 @@
                     }, delay);
                 };
 
-                for (let i = 1; i <= 26; i++) scheduleNext(i);
+                rosterRef.current.forEach(i => scheduleNext(i));
 
                 return () => {
                     Object.values(floatingTimersRef.current).forEach(clearTimeout);
                     floatingTimersRef.current = {};
                 };
-            }, [unlockEmojis]);
+            }, [unlockEmojis, roster]);
             
             useEffect(() => {
                 if (schedule.length > 0) {
@@ -1188,7 +1317,7 @@
                         lastDateRef.current = currentToday;
                         setFeedStates(prev => {
                            const initial = {};
-                           for(let i=1; i<=26; i++) initial[i] = false;
+                           rosterRef.current.forEach(i => { initial[i] = false; });
                            return initial;
                         });
                     }
@@ -1232,7 +1361,7 @@
                 const generatedPositions = [];
                 const minDist = 12; 
                 
-                for(let i=1; i<=26; i++) {
+                for (const i of rosterRef.current) {
                     if (!fishesLogic.current[i]) {
                         let initX, initY;
                         let attempts = 0;
@@ -1282,6 +1411,13 @@
 
                     const foods = foodsLogic.current;
                     const fishes = fishesLogic.current;
+                    // 名單新增的座號：補上魚的物理資料
+                    for (const n of rosterRef.current) {
+                        if (!fishes[n]) {
+                            const ang = Math.random() * Math.PI * 2;
+                            fishes[n] = { x: 10 + Math.random() * 80, y: 20 + Math.random() * 60, vx: Math.cos(ang) * 0.01, vy: Math.sin(ang) * 0.01, hx: Math.cos(ang), hy: Math.sin(ang), wanderAngle: ang, speed: Math.random() * 0.03 + 0.02, state: 'wander', idleTimer: 0, interactionCooldown: Math.random() * 5000, targetFishId: null, targetFoodId: null };
+                        }
+                    }
 
                     // 0. 更新氣泡物理
                     for(let i=0; i<NUM_BUBBLES; i++) {
@@ -1415,48 +1551,14 @@
                         } else {
                             const aqEl = document.getElementById('aquarium-area');
                             const A = aqEl && aqEl.clientHeight ? aqEl.clientWidth / aqEl.clientHeight : 1.2;
-                            formCtx = { id: formNow.id, t: el / 1000, n: formNow.members.length, A, ease: Math.min(1, el / 1200, (formNow.dur - el) / 2500) };
-                        }
-                    }
-
-                    // ★ 卡住偵測：兩隻魚持續貼在一起超過 5 秒，立即朝反方向分開
-                    {
-                        const stuckT = updateLoop._stuck || (updateLoop._stuck = {});
-                        const STUCK_DIST = 5, STUCK_MS = 5000;
-                        const inFormNow = classFormRef.current ? classFormRef.current.rank : null;
-                        const free = (f, n) => f && f.state !== 'dead' && f.state !== 'drag' && f.state !== 'seek' && !(inFormNow && inFormNow[n] !== undefined);
-                        for (let a = 1; a <= 26; a++) {
-                            const fa = fishes[a];
-                            for (let b = a + 1; b <= 26; b++) {
-                                const fb = fishes[b];
-                                const key = a * 100 + b;
-                                if (!free(fa, a) || !free(fb, b)) { delete stuckT[key]; continue; }
-                                const sx = fa.x - fb.x, sy = fa.y - fb.y;
-                                const sd = Math.hypot(sx, sy);
-                                if (sd >= STUCK_DIST) { delete stuckT[key]; continue; }
-                                stuckT[key] = (stuckT[key] || 0) + safeDt;
-                                if (stuckT[key] >= STUCK_MS) {
-                                    delete stuckT[key];
-                                    const base = sd > 0.01 ? Math.atan2(sy, sx) : Math.random() * Math.PI * 2;
-                                    const apply = (f, ang) => {
-                                        f.state = 'evade';
-                                        f.idleTimer = 2000;
-                                        f.wanderAngle = ang;
-                                        f.action = null;
-                                        f.vx = Math.cos(ang) * 0.06;
-                                        f.vy = Math.sin(ang) * 0.06;
-                                        f.interactionCooldown = 5000;
-                                    };
-                                    apply(fa, base);
-                                    apply(fb, base + Math.PI);
-                                }
-                            }
+                            formCtx = { id: formNow.id, t: el / 1000, n: formNow.members.length, A, ease: Math.min(1, el / 3000, (formNow.dur - el) / 2500) };
                         }
                     }
 
                     // 2. 魚群向量與行為物理
-                    for (let i = 1; i <= 26; i++) {
+                    for (const i of rosterRef.current) {
                         const fish = fishes[i];
+                        if (!fish || !document.getElementById(`fish-container-${i}`)) continue; // 新座號等畫面長出魚再開始游
                         const stat = fishStatsRef.current[i] || { streak: 0, lastFed: '', leaveDates: [] };
                         const isLeaveToday = stat.leaveDates && stat.leaveDates.includes(todayStr);
                         
@@ -1501,9 +1603,10 @@
 
                             // 社交互動判定 (只限優游或休息時)
                             if ((fish.state === 'wander' || fish.state === 'idle') && fish.interactionCooldown <= 0) {
-                                for (let j = 1; j <= 26; j++) {
+                                for (const j of rosterRef.current) {
                                     if (i === j) continue;
                                     const otherFish = fishes[j];
+                                    if (!otherFish) continue;
                                     if (otherFish.state !== 'wander' && otherFish.state !== 'idle') continue;
                                     if (otherFish.interactionCooldown > 0) continue;
 
@@ -1630,10 +1733,10 @@
 
                             // 群集排斥力 (避免重疊)
                             let sepX = 0, sepY = 0;
-                            for(let j=1; j<=26; j++){
+                            for (const j of rosterRef.current) {
                                 if(i===j) continue;
                                 const other = fishes[j];
-                                if(other.state === 'dead') continue;
+                                if(!other || other.state === 'dead') continue;
                                 const ddx = fish.x - other.x;
                                 const ddy = fish.y - other.y;
                                 const ddist = Math.sqrt(ddx*ddx + ddy*ddy);
@@ -1886,13 +1989,40 @@
                 return null;
             }, [adjustedNow, schedule]);
 
+            // ★ 今日流程：目前時段固定置頂；手動滑去看其他節，10 秒沒有任何操作就自動回捲
+            const scheduleListRef = useRef(null);
+            const scheduleSpacerRef = useRef(null);
+            const pinTimerRef = useRef(null);
+            const currentSlotIdRef = useRef(null);
+            currentSlotIdRef.current = currentSlot ? currentSlot.id : null;
+            const pinCurrentSlot = (smooth) => {
+                const cont = scheduleListRef.current;
+                const spacer = scheduleSpacerRef.current;
+                if (!cont) return;
+                const id = currentSlotIdRef.current;
+                const el = id ? itemRefs.current[id] : null;
+                if (!el) { if (spacer) spacer.style.height = '0px'; return; }
+                const padTop = parseFloat(getComputedStyle(cont).paddingTop) || 0;
+                // 底部補白：讓最後幾節也能捲到最頂
+                if (spacer) spacer.style.height = Math.max(0, cont.clientHeight - el.offsetHeight - padTop) + 'px';
+                const top = cont.scrollTop + (el.getBoundingClientRect().top - cont.getBoundingClientRect().top) - padTop;
+                cont.scrollTo({ top: Math.max(0, top), behavior: smooth ? 'smooth' : 'auto' });
+            };
+            const onScheduleUserAction = () => {
+                clearTimeout(pinTimerRef.current);
+                pinTimerRef.current = setTimeout(() => pinCurrentSlot(true), 10000);
+            };
+            const scheduleKey = schedule.map(sl => sl.id).join(',');
+            useEffect(() => {
+                const t = setTimeout(() => pinCurrentSlot(true), 60);
+                return () => clearTimeout(t);
+            }, [currentSlot ? currentSlot.id : null, scheduleKey]);
+            useEffect(() => () => clearTimeout(pinTimerRef.current), []);
+
             useEffect(() => {
                 if (!currentSlot) { setActiveSlotId(null); return; }
                 if (currentSlot.id !== activeSlotId) {
                     setActiveSlotId(currentSlot.id);
-                    if (itemRefs.current[currentSlot.id]) {
-                        itemRefs.current[currentSlot.id].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                    }
                     const isJustStarted = currentSlot.progressMs < 90000;
                     if (currentSlot.type === 'brushing' || currentSlot.label.includes('潔牙')) {
                         if (isJustStarted && countDownMode === 'idle') {
@@ -2064,7 +2194,204 @@
                 }
             };
 
-            const seatNumbers = Array.from({ length: 26 }, (_, i) => i + 1);
+            const seatNumbers = roster;
+
+            // ★ 管理員密碼流程
+            const closeAuthModal = () => { setAuthModal({isOpen: false, action: null}); setAdminPassword(''); setNewPw(''); setNewPw2(''); setAuthPhase('enter'); };
+            const validateNewPw = (a, b) => {
+                if (a.length < 4) return '密碼至少需要 4 個字元';
+                if (a !== b) return '兩次輸入的密碼不一致';
+                if (a === DEFAULT_ADMIN_PW) return '新密碼不可以與預設密碼相同';
+                return '';
+            };
+            const savePassword = (pw) => {
+                const auth = makeAdminAuth(pw);
+                try { localStorage.setItem(ADMIN_AUTH_KEY, JSON.stringify(auth)); }
+                catch (e) { alert('❌ 無法儲存密碼（瀏覽器儲存空間無法使用）'); return false; }
+                setAdminAuth(auth); // 立即套用新密碼
+                return true;
+            };
+            const enterSettings = () => { closeAuthModal(); setSettingsUnlocked(true); setIsSettingsOpen(true); };
+            const submitAuth = () => {
+                if (authPhase === 'setup') {
+                    const err = validateNewPw(newPw, newPw2);
+                    if (err) { alert('❌ ' + err); return; }
+                    if (!savePassword(newPw)) return;
+                    alert('✅ 新密碼已設定並立即生效！之後每次開啟設定都需要輸入這組密碼。');
+                    enterSettings();
+                    return;
+                }
+                if (!adminAuth) { // 此裝置第一次使用：先以預設密碼驗證，再進入密碼設定
+                    if (adminPassword === DEFAULT_ADMIN_PW) { setAdminPassword(''); setAuthPhase('setup'); }
+                    else { alert('❌ 密碼錯誤！'); setAdminPassword(''); }
+                    return;
+                }
+                if (checkAdminPw(adminPassword, adminAuth)) enterSettings();
+                else { alert('❌ 密碼錯誤！'); setAdminPassword(''); }
+            };
+            const aboutContent = (
+                <div className="text-center space-y-4 py-4">
+                    <div className="text-5xl">🐠</div>
+                    <div className="text-2xl font-black text-slate-700">班級智慧看板</div>
+                    <div className="inline-block text-left bg-slate-50 border rounded-xl px-6 py-4 space-y-2">
+                        <div className="text-slate-500 text-sm">設計　<span className="text-slate-800 font-bold text-lg ml-2">{APP_DESIGNER}</span></div>
+                        <div className="text-slate-500 text-sm">版本號　<span className="text-slate-800 font-bold text-lg ml-2 font-mono">{APP_VERSION}</span></div>
+                    </div>
+                </div>
+            );
+            // ★ 班級名單管理
+            const addSeatsFromText = () => {
+                const nums = parseSeatExpr(rosterAddText);
+                if (nums.length === 0) { alert(`❌ 請輸入 1～${MAX_SEAT} 的座號，例如：31　或　27-30,35`); return; }
+                const fresh = nums.filter(n => !roster.includes(n));
+                if (fresh.length === 0) { alert('這些座號已經在名單裡了。'); return; }
+                setRoster(sanitizeRoster([...roster, ...fresh]));
+                setRosterAddText('');
+            };
+            const removeSeat = (n) => {
+                if (roster.length <= 1) { alert('名單至少要保留 1 位學生。'); return; }
+                if (!confirm(`確定要刪除 ${n} 號嗎？\n這位同學的魚、能量與暱稱都會一併清除，無法復原。`)) return;
+                setRoster(prev => prev.filter(x => x !== n));
+                const dropKey = (prev) => { const x = { ...prev }; delete x[n]; return x; };
+                setFishStats(dropKey);
+                setFeedStates(dropKey);
+                setNicknames(dropKey);
+                setExcludedSeats(prev => prev.filter(x => x !== n));
+                delete fishesLogic.current[n];
+                if (floatingTimersRef.current[n]) { clearTimeout(floatingTimersRef.current[n]); delete floatingTimersRef.current[n]; }
+            };
+            // ★ 設定內的各項功能（進入設定時已通過管理員驗證，不需再輸入密碼）
+            const doSimulate = () => {
+                setFishStats(prev => {
+                    let n = {...prev};
+                    seatNumbers.forEach(i => { if(n[i]) n[i] = applyManualStreak(n[i], simulatedStreakInput); });
+                    return n;
+                });
+                alert('✅ 設定成功！能量已成功模擬。');
+            };
+            const doExport = () => {
+                const kind = exportFishData();
+                alert(kind === 'xlsx' ? '✅ 匯出成功！已下載 Excel 檔（含暱稱欄）。' : '✅ 匯出成功！（目前載入不到 Excel 元件，已改匯出 CSV，Excel 也能直接開啟，含暱稱欄）');
+            };
+            const doImport = (data) => {
+                setRoster(prev => sanitizeRoster([...prev, ...data.map(d => d.num)])); // 檔案裡的新座號會自動加入名單
+                setFishStats(prev => {
+                    const next = { ...prev };
+                    data.forEach(({ num, type, streak }) => {
+                        next[num] = applyManualStreak({ ...(next[num] || {}), type }, streak);
+                    });
+                    return next;
+                });
+                const nickRows = data.filter(d => d.nick !== undefined);
+                if (nickRows.length) {
+                    setNicknames(prev => {
+                        const n = { ...prev };
+                        nickRows.forEach(({ num, nick }) => { if (nick) n[num] = nick; else delete n[num]; });
+                        return n;
+                    });
+                }
+                alert(`✅ 匯入成功！已更新 ${data.length} 位學生的資料${nickRows.length ? '（含暱稱）' : '（檔案沒有暱稱欄，暱稱維持不變）'}。`);
+            };
+            const doStreakEdit = (num, value) => setFishStats(prev => ({...prev, [num]: applyManualStreak(prev[num], value)}));
+            const doReset = () => {
+                setFishStats(prev => {
+                    let n = {...prev};
+                    seatNumbers.forEach(i => {
+                        n[i] = { type: FISH_ICONS[0], streak: 0, lastFed: '', lastFedTimestamp: 0, leaveDates: [] };
+                    });
+                    return n;
+                });
+                setFeedStates(prev => {
+                    let n = {...prev};
+                    seatNumbers.forEach(i => { n[i] = false; });
+                    return n;
+                });
+                // 徹底清空上課日紀錄與實體物件
+                setSchoolDays([]);
+                schoolDaysRef.current = [];
+                setFoodsState([]);
+                seatNumbers.forEach(i => {
+                    if (fishesLogic.current[i]) {
+                        fishesLogic.current[i].state = 'wander';
+                        fishesLogic.current[i].targetFoodId = null;
+                    }
+                });
+                foodsLogic.current = {};
+                alert('✅ 重置成功！系統已恢復為最初始狀態。');
+            };
+            // ★ 魚群資料 Excel / CSV 匯出入（欄位：座號、魚種、能量、暱稱）
+            const FISH_COLS = ['座號', '魚種', '能量', '暱稱'];
+            const buildFishRows = () => [FISH_COLS, ...seatNumbers.map(num => {
+                const st = fishStats[num] || { type: '🐠', streak: 0 };
+                return [num, st.type, st.streak || 0, nicknames[num] || ''];
+            })];
+            const parseCsvText = (text) => text.replace(/^\uFEFF/, '').split(/\r?\n/).filter(l => l.trim()).map(line => {
+                const out = []; let cur = '', q = false;
+                for (let i = 0; i < line.length; i++) {
+                    const ch = line[i];
+                    if (q) { if (ch === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += ch; }
+                    else if (ch === '"') q = true;
+                    else if (ch === ',') { out.push(cur); cur = ''; }
+                    else cur += ch;
+                }
+                out.push(cur);
+                return out;
+            });
+            // rows: 二維陣列（Excel 或 CSV 讀進來的列）。沒有「暱稱」欄的舊檔 → nick 為 undefined（不動暱稱）
+            const rowsToFishData = (rows) => {
+                if (!rows || !rows.length) return [];
+                const head = rows[0].map(c => String(c ?? '').trim());
+                const hasHeader = isNaN(parseInt(head[0], 10));
+                const find = (name, def) => { const k = hasHeader ? head.indexOf(name) : -1; return k >= 0 ? k : def; };
+                const iNum = find('座號', 0), iType = find('魚種', 1), iStreak = find('能量', 2);
+                const iNick = hasHeader ? head.indexOf('暱稱') : (rows[0].length > 3 ? 3 : -1);
+                const parsed = [];
+                (hasHeader ? rows.slice(1) : rows).forEach(row => {
+                    const num = parseInt(String(row[iNum] ?? '').trim(), 10);
+                    const rawType = String(row[iType] ?? '').trim();
+                    const streak = parseInt(String(row[iStreak] ?? '').trim(), 10);
+                    const type = rawType.length > 0 ? rawType : (fishStats[num]?.type || FISH_ICONS[0]);
+                    const nick = iNick >= 0 ? String(row[iNick] ?? '').trim().slice(0, 8) : undefined;
+                    if (num >= 1 && num <= MAX_SEAT && !isNaN(streak)) parsed.push({ num, type, streak, nick });
+                });
+                return parsed;
+            };
+            const exportFishData = () => {
+                const rows = buildFishRows();
+                const stamp = getTodayStr(new Date());
+                if (window.XLSX) {
+                    const ws = XLSX.utils.aoa_to_sheet(rows);
+                    ws['!cols'] = [{ wch: 6 }, { wch: 8 }, { wch: 8 }, { wch: 14 }];
+                    const wb = XLSX.utils.book_new();
+                    XLSX.utils.book_append_sheet(wb, ws, '班級魚群資料');
+                    XLSX.writeFile(wb, `班級魚群資料_${stamp}.xlsx`);
+                    return 'xlsx';
+                }
+                const esc = v => { v = String(v ?? ''); return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v; };
+                const csv = rows.map(r => r.map(esc).join(',')).join('\n');
+                const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = `班級魚群資料_${stamp}.csv`; a.click();
+                URL.revokeObjectURL(url);
+                return 'csv';
+            };
+            // ★ 批次貼上暱稱：每行「座號 暱稱」（座號與暱稱以 Tab／逗號／空白／句點分隔），
+            //   或整份都沒有座號時，依序當作 1、2、3… 號（空白行 = 略過該座號）
+            const parseNickBatch = (text, rosterList) => {
+                const lines = text.split(/\r?\n/).map(l => l.replace(/\s+$/, ''));
+                const nonblank = lines.filter(l => l.trim());
+                const pat = /^\s*(\d{1,2})\s*(?:[\t,，、:：.．]|\s)\s*(.*)$/;
+                const matchLine = (l) => { const m = l.match(pat); if (m) return [m[1], m[2]]; const b = l.match(/^\s*(\d{1,2})\s*$/); return b ? [b[1], ''] : null; };
+                const withNum = nonblank.length > 0 && nonblank.every(l => { const m = matchLine(l); return m && +m[0] >= 1 && +m[0] <= MAX_SEAT; });
+                const result = {};
+                if (withNum) {
+                    nonblank.forEach(l => { const m = matchLine(l); result[+m[0]] = m[1].trim().slice(0, 8); });
+                } else {
+                    lines.slice(0, rosterList.length).forEach((l, i) => { if (l.trim()) result[rosterList[i]] = l.trim().slice(0, 8); });
+                }
+                return { result, withNum, extra: withNum ? 0 : Math.max(0, lines.filter(l => l.trim()).length - Object.keys(result).length) };
+            };
             
             const todayStr = getTodayStr(adjustedNow);
             let completedCount = 0;
@@ -2128,112 +2455,68 @@
                     {authModal.isOpen && (
                         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
                             <div className="bg-white p-6 rounded-2xl shadow-2xl flex flex-col items-center gap-4 animate-[fadeIn_0.2s_ease-out] w-full max-w-sm">
-                                <div className="text-xl font-black text-slate-700 mb-2">🔒 系統管理員驗證</div>
-                                <input 
-                                    type="password" 
-                                    value={adminPassword}
-                                    onChange={e => setAdminPassword(e.target.value)}
-                                    placeholder="請輸入密碼"
-                                    className="border-2 border-slate-300 bg-slate-50 text-slate-800 rounded-lg px-4 py-3 text-center text-2xl tracking-[0.3em] outline-none focus:border-blue-500 w-full font-mono"
-                                    autoFocus
-                                    onKeyDown={e => {
-                                        if (e.key === 'Enter') document.getElementById('auth-submit-btn').click();
-                                        if (e.key === 'Escape') { setAuthModal({isOpen: false, action: null}); setAdminPassword(''); }
-                                    }}
-                                />
+                                {authPhase === 'setup' ? (
+                                    <>
+                                        <div className="text-xl font-black text-slate-700 mb-1">🔑 設定管理員密碼</div>
+                                        <div className="text-sm text-slate-500 text-center leading-relaxed">請設定一組新的管理員密碼（至少 4 個字元）。<br/>儲存後立即生效，之後每次開啟設定都需要輸入。</div>
+                                        <input
+                                            type="password"
+                                            value={newPw}
+                                            onChange={e => setNewPw(e.target.value)}
+                                            placeholder="新密碼"
+                                            autoComplete="new-password"
+                                            autoFocus
+                                            className="border-2 border-slate-300 bg-slate-50 text-slate-800 rounded-lg px-4 py-3 text-center text-xl tracking-[0.2em] outline-none focus:border-blue-500 w-full font-mono"
+                                            onKeyDown={e => { if (e.key === 'Escape') closeAuthModal(); }}
+                                        />
+                                        <input
+                                            type="password"
+                                            value={newPw2}
+                                            onChange={e => setNewPw2(e.target.value)}
+                                            placeholder="再輸入一次新密碼"
+                                            autoComplete="new-password"
+                                            className="border-2 border-slate-300 bg-slate-50 text-slate-800 rounded-lg px-4 py-3 text-center text-xl tracking-[0.2em] outline-none focus:border-blue-500 w-full font-mono"
+                                            onKeyDown={e => { if (e.key === 'Enter') submitAuth(); if (e.key === 'Escape') closeAuthModal(); }}
+                                        />
+                                    </>
+                                ) : (
+                                    <>
+                                        <div className="text-xl font-black text-slate-700 mb-1">🔒 系統管理員驗證</div>
+                                        {!adminAuth && (
+                                            <div className="w-full bg-amber-50 border border-amber-200 text-amber-800 rounded-lg p-3 text-sm text-center leading-relaxed">
+                                                🆕 這是此裝置第一次使用管理員設定<br/>
+                                                預設密碼是 <span className="font-mono font-black text-lg select-all">{DEFAULT_ADMIN_PW}</span><br/>
+                                                驗證後請立即設定新密碼
+                                            </div>
+                                        )}
+                                        <input
+                                            type="password"
+                                            value={adminPassword}
+                                            onChange={e => setAdminPassword(e.target.value)}
+                                            placeholder="請輸入密碼"
+                                            autoComplete="off"
+                                            autoFocus
+                                            className="border-2 border-slate-300 bg-slate-50 text-slate-800 rounded-lg px-4 py-3 text-center text-2xl tracking-[0.3em] outline-none focus:border-blue-500 w-full font-mono"
+                                            onKeyDown={e => { if (e.key === 'Enter') submitAuth(); if (e.key === 'Escape') closeAuthModal(); }}
+                                        />
+                                    </>
+                                )}
                                 <div className="flex gap-3 w-full mt-2">
-                                    <button 
-                                        onClick={() => { setAuthModal({isOpen: false, action: null}); setAdminPassword(''); }} 
-                                        className="flex-1 bg-slate-200 text-slate-600 py-3 rounded-xl font-bold hover:bg-slate-300 transition"
-                                    >
-                                        取消
-                                    </button>
-                                    <button 
-                                        id="auth-submit-btn"
-                                        onClick={() => {
-                                            if (adminPassword === '06090721') {
-                                                if (authModal.action === 'simulate') {
-                                                    setFishStats(prev => {
-                                                        let n = {...prev};
-                                                        for(let i=1; i<=26; i++) if(n[i]) n[i] = applyManualStreak(n[i], simulatedStreakInput);
-                                                        return n;
-                                                    });
-                                                    alert('✅ 設定成功！能量已成功模擬。');
-                                                } else if (authModal.action === 'export') {
-                                                    const header = '座號,魚種,能量';
-                                                    const rows = Array.from({length:26},(_,i)=>i+1).map(num => {
-                                                        const stat = fishStatsRef.current[num] || { type:'🐠', streak:0 };
-                                                        return `${num},${stat.type},${stat.streak}`;
-                                                    });
-                                                    const csv = [header, ...rows].join('\n');
-                                                    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
-                                                    const url = URL.createObjectURL(blob);
-                                                    const a = document.createElement('a');
-                                                    a.href = url;
-                                                    a.download = `班級魚群資料_${getTodayStr(new Date())}.csv`;
-                                                    a.click();
-                                                    URL.revokeObjectURL(url);
-                                                    alert('✅ 匯出成功！');
-                                                } else if (authModal.action === 'import') {
-                                                    if (pendingImportData) {
-                                                        let updated = 0;
-                                                        setFishStats(prev => {
-                                                            const next = { ...prev };
-                                                            pendingImportData.forEach(({ num, type, streak }) => {
-                                                                next[num] = applyManualStreak({ ...(next[num] || {}), type }, streak);
-                                                                updated++;
-                                                            });
-                                                            return next;
-                                                        });
-                                                        alert(`✅ 匯入成功！已更新 ${pendingImportData.length} 位學生的資料。`);
-                                                        setPendingImportData(null);
-                                                    }
-                                                } else if (authModal.action === 'streakEdit') {
-                                                    if (pendingStreakEdit) {
-                                                        const { num, value } = pendingStreakEdit;
-                                                        setFishStats(prev => ({...prev, [num]: applyManualStreak(prev[num], value)}));
-                                                        setPendingStreakEdit(null);
-                                                    }
-                                                } else if (authModal.action === 'nickname') {
-                                                    setSettingsTab('nicknames');
-                                                } else if (authModal.action === 'reset') {
-                                                    setFishStats(prev => {
-                                                        let n = {...prev};
-                                                        for(let i=1; i<=26; i++) {
-                                                            n[i] = { type: FISH_ICONS[0], streak: 0, lastFed: '', lastFedTimestamp: 0, leaveDates: [] };
-                                                        }
-                                                        return n;
-                                                    });
-                                                    setFeedStates(prev => {
-                                                        let n = {...prev};
-                                                        for(let i=1; i<=26; i++) n[i] = false;
-                                                        return n;
-                                                    });
-                                                    // 徹底清空上課日紀錄與實體物件
-                                                    setSchoolDays([]);
-                                                    schoolDaysRef.current = [];
-                                                    setFoodsState([]);
-                                                    for(let i=1; i<=26; i++) {
-                                                        if (fishesLogic.current[i]) {
-                                                            fishesLogic.current[i].state = 'wander';
-                                                            fishesLogic.current[i].targetFoodId = null;
-                                                        }
-                                                    }
-                                                    foodsLogic.current = {};
-                                                    alert('✅ 重置成功！系統已恢復為最初始狀態。');
-                                                }
-                                                setAuthModal({isOpen: false, action: null});
-                                                setAdminPassword('');
-                                            } else {
-                                                alert('❌ 密碼錯誤！');
-                                                setAdminPassword('');
-                                            }
-                                        }} 
-                                        className="flex-1 bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 transition shadow-lg"
-                                    >
-                                        確認執行
+                                    <button onClick={closeAuthModal} className="flex-1 bg-slate-200 text-slate-600 py-3 rounded-xl font-bold hover:bg-slate-300 transition">取消</button>
+                                    <button onClick={submitAuth} className="flex-1 bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 transition shadow-lg">
+                                        {authPhase === 'setup' ? '儲存並套用' : '確認'}
                                     </button>
                                 </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* 關於 Modal（不需密碼） */}
+                    {isAboutOpen && (
+                        <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={() => setIsAboutOpen(false)}>
+                            <div className="bg-white p-6 rounded-2xl shadow-2xl w-full max-w-sm" onClick={e => e.stopPropagation()}>
+                                {aboutContent}
+                                <button onClick={() => setIsAboutOpen(false)} className="w-full mt-2 bg-slate-200 text-slate-600 py-2.5 rounded-xl font-bold hover:bg-slate-300 transition">關閉</button>
                             </div>
                         </div>
                     )}
@@ -2269,7 +2552,10 @@
                                         <button onClick={()=>setSettingsTab('schedule')} className={`px-3 py-1.5 lg:px-4 lg:py-2 rounded-md font-bold transition text-sm lg:text-base ${settingsTab==='schedule'?'bg-white shadow text-blue-600':'text-slate-500 hover:text-slate-700'}`}>作息表</button>
                                         <button onClick={()=>setSettingsTab('reminders')} className={`px-3 py-1.5 lg:px-4 lg:py-2 rounded-md font-bold transition text-sm lg:text-base ${settingsTab==='reminders'?'bg-white shadow text-orange-600':'text-slate-500 hover:text-slate-700'}`}>小叮嚀</button>
                                         <button onClick={()=>setSettingsTab('fish')} className={`px-3 py-1.5 lg:px-4 lg:py-2 rounded-md font-bold transition text-sm lg:text-base ${settingsTab==='fish'?'bg-white shadow text-teal-600':'text-slate-500 hover:text-slate-700'}`}>🐠 魚群設定</button>
-                                        <button onClick={()=>{ if (settingsTab !== 'nicknames') setAuthModal({isOpen: true, action: 'nickname'}); }} className={`px-3 py-1.5 lg:px-4 lg:py-2 rounded-md font-bold transition text-sm lg:text-base ${settingsTab==='nicknames'?'bg-white shadow text-indigo-600':'text-slate-500 hover:text-slate-700'}`}>🏷️ 暱稱 🔒</button>
+                                        <button onClick={() => setSettingsTab('nicknames')} className={`px-3 py-1.5 lg:px-4 lg:py-2 rounded-md font-bold transition text-sm lg:text-base ${settingsTab==='nicknames'?'bg-white shadow text-indigo-600':'text-slate-500 hover:text-slate-700'}`}>🏷️ 暱稱</button>
+                                        <button onClick={() => setSettingsTab('class')} className={`px-3 py-1.5 lg:px-4 lg:py-2 rounded-md font-bold transition text-sm lg:text-base ${settingsTab==='class'?'bg-white shadow text-indigo-600':'text-slate-500 hover:text-slate-700'}`}>👥 班級與版面</button>
+                                        <button onClick={() => setSettingsTab('security')} className={`px-3 py-1.5 lg:px-4 lg:py-2 rounded-md font-bold transition text-sm lg:text-base ${settingsTab==='security'?'bg-white shadow text-indigo-600':'text-slate-500 hover:text-slate-700'}`}>🔑 密碼</button>
+                                        <button onClick={() => setSettingsTab('about')} className={`px-3 py-1.5 lg:px-4 lg:py-2 rounded-md font-bold transition text-sm lg:text-base ${settingsTab==='about'?'bg-white shadow text-indigo-600':'text-slate-500 hover:text-slate-700'}`}>ℹ️ 關於</button>
                                         <button onClick={()=>setSettingsTab('holidays')} className={`px-3 py-1.5 lg:px-4 lg:py-2 rounded-md font-bold transition text-sm lg:text-base ${settingsTab==='holidays'?'bg-white shadow text-pink-600':'text-slate-500 hover:text-slate-700'}`}>🎉 節慶特餐</button>
                                         <button onClick={()=>setSettingsTab('clock')} className={`px-3 py-1.5 lg:px-4 lg:py-2 rounded-md font-bold transition text-sm lg:text-base ${settingsTab==='clock'?'bg-white shadow text-purple-600':'text-slate-500 hover:text-slate-700'}`}>⏱️ 校時</button>
                                     </div>
@@ -2334,60 +2620,55 @@
                                                 <div className="flex gap-2">
                                                     <div className="flex items-center gap-1 border border-blue-300 rounded px-2 bg-white">
                                                         <input type="number" min="0" max="999" value={simulatedStreakInput} onChange={e => setSimulatedStreakInput(Number(e.target.value))} className="w-12 text-center outline-none text-sm text-blue-600 font-bold" />
-                                                        <button onClick={() => setAuthModal({isOpen: true, action: 'simulate'})} className="bg-blue-50 hover:bg-blue-100 text-blue-600 px-2 py-1 text-sm font-bold transition shrink-0">模擬能量</button>
+                                                        <button onClick={() => { if (confirm(`確定要把全班能量模擬為 ${simulatedStreakInput} 嗎？`)) doSimulate(); }} className="bg-blue-50 hover:bg-blue-100 text-blue-600 px-2 py-1 text-sm font-bold transition shrink-0">模擬能量</button>
                                                     </div>
 
-                                                    <button onClick={() => setAuthModal({isOpen: true, action: 'reset'})} className="bg-white border border-teal-300 text-teal-600 hover:bg-teal-100 px-3 py-1.5 rounded shadow-sm text-sm font-bold transition shrink-0">重置初始狀態</button>
+                                                    <button onClick={() => { if (confirm('確定要重置為最初始狀態嗎？\n所有能量、魚種、上課日紀錄都會清空，且無法復原。（暱稱不受影響）')) doReset(); }} className="bg-white border border-teal-300 text-teal-600 hover:bg-teal-100 px-3 py-1.5 rounded shadow-sm text-sm font-bold transition shrink-0">重置初始狀態</button>
                                                 </div>
                                             </div>
-                                            {/* 匯出 / 匯入 CSV 按鈕 */}
+                                            {/* 匯出 / 匯入 Excel 按鈕（魚群資料與暱稱統一在同一個檔案） */}
                                             <div className="flex flex-wrap gap-2 mb-2">
                                                 <button
-                                                    onClick={() => setAuthModal({isOpen: true, action: 'export'})}
+                                                    onClick={doExport}
                                                     className="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-lg font-bold text-sm shadow transition flex items-center gap-1"
                                                 >
-                                                    📥 匯出 CSV
+                                                    📥 匯出 Excel
                                                 </button>
                                                 <label className="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-lg font-bold text-sm shadow transition cursor-pointer flex items-center gap-1">
-                                                    📤 匯入 CSV
+                                                    📤 匯入 Excel／CSV
                                                     <input
                                                         type="file"
-                                                        accept=".csv"
+                                                        accept=".xlsx,.xls,.csv"
                                                         className="hidden"
                                                         onChange={(e) => {
                                                             const file = e.target.files[0];
                                                             if (!file) return;
+                                                            const isExcel = /\.xlsx?$/i.test(file.name);
+                                                            const finish = (rows) => {
+                                                                const parsed = rowsToFishData(rows);
+                                                                if (parsed.length === 0) { alert('❌ 找不到有效資料，請確認欄位：座號、魚種、能量、暱稱。'); return; }
+                                                                if (confirm(`即將以檔案內容更新 ${parsed.length} 位學生的資料，確定匯入嗎？`)) doImport(parsed);
+                                                            };
                                                             const reader = new FileReader();
                                                             reader.onload = (ev) => {
                                                                 try {
-                                                                    const text = ev.target.result.replace(/^\uFEFF/, '');
-                                                                    const lines = text.split('\n').filter(l => l.trim());
-                                                                    const parsed = [];
-                                                                    lines.slice(1).forEach(line => {
-                                                                        const parts = line.split(',');
-                                                                        if (parts.length < 3) return;
-                                                                        const num = parseInt(parts[0].trim(), 10);
-                                                                        const rawType = parts[1].trim();
-                                                                        const streak = parseInt(parts[2].trim(), 10);
-                                                                        // 只要魚種欄位非空就接受（允許所有 emoji），不做嚴格的陣列比對
-                                                                        const type = rawType.length > 0 ? rawType : (fishStats[num]?.type || FISH_ICONS[0]);
-                                                                        if (num >= 1 && num <= 26 && !isNaN(streak)) {
-                                                                            parsed.push({ num, type, streak });
-                                                                        }
-                                                                    });
-                                                                    if (parsed.length === 0) { alert('❌ 找不到有效資料，請確認 CSV 格式。'); return; }
-                                                                    setPendingImportData(parsed);
-                                                                    setAuthModal({isOpen: true, action: 'import'});
-                                                                } catch(err) {
-                                                                    alert('❌ 匯入失敗，請確認 CSV 格式正確。');
+                                                                    if (isExcel) {
+                                                                        if (!window.XLSX) { alert('❌ Excel 元件尚未載入，請連上網路後重試，或改用 CSV 檔。'); return; }
+                                                                        const wb = XLSX.read(ev.target.result, { type: 'array' });
+                                                                        finish(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' }));
+                                                                    } else {
+                                                                        finish(parseCsvText(ev.target.result));
+                                                                    }
+                                                                } catch (err) {
+                                                                    alert('❌ 匯入失敗，請確認檔案格式正確。');
                                                                 }
-                                                                e.target.value = '';
                                                             };
-                                                            reader.readAsText(file, 'UTF-8');
+                                                            if (isExcel) reader.readAsArrayBuffer(file); else reader.readAsText(file, 'UTF-8');
+                                                            e.target.value = '';
                                                         }}
                                                     />
                                                 </label>
-                                                <div className="text-xs text-slate-400 self-center">格式：座號,魚種,能量</div>
+                                                <div className="text-xs text-slate-400 self-center">欄位：座號、魚種、能量、暱稱（舊檔沒有暱稱欄也能匯入，暱稱不會被改動；有暱稱欄時，空白儲存格會清除該暱稱）</div>
                                             </div>
 
                                             {/* ★ 解鎖表情包管理區 */}
@@ -2534,7 +2815,7 @@
                                                             {/* 手動設定餵食天數（需驗證） */}
                                                             <div className="flex items-center gap-1 w-full justify-center mt-0.5">
                                                                 <button
-                                                                    onClick={() => { setPendingStreakEdit({num, value: Math.max(0, (stat.streak||0) - 1)}); setAuthModal({isOpen: true, action: 'streakEdit'}); }}
+                                                                    onClick={() => doStreakEdit(num, Math.max(0, (stat.streak||0) - 1))}
                                                                     className="w-6 h-6 rounded bg-slate-200 hover:bg-red-100 hover:text-red-600 font-bold text-sm flex items-center justify-center transition leading-none"
                                                                 >－</button>
                                                                 <input
@@ -2547,13 +2828,12 @@
                                                                     onClick={() => {
                                                                         const val = parseInt(prompt(`輸入 ${num} 號的新能量：`, stat.streak));
                                                                         if (isNaN(val) || val < 0) return;
-                                                                        setPendingStreakEdit({num, value: val});
-                                                                        setAuthModal({isOpen: true, action: 'streakEdit'});
+                                                                        doStreakEdit(num, val);
                                                                     }}
                                                                     className="w-12 text-center border rounded text-xs font-bold text-teal-700 bg-white outline-none cursor-pointer hover:border-teal-400 py-0.5"
                                                                 />
                                                                 <button
-                                                                    onClick={() => { setPendingStreakEdit({num, value: (stat.streak||0) + 1}); setAuthModal({isOpen: true, action: 'streakEdit'}); }}
+                                                                    onClick={() => doStreakEdit(num, (stat.streak||0) + 1)}
                                                                     className="w-6 h-6 rounded bg-slate-200 hover:bg-green-100 hover:text-green-600 font-bold text-sm flex items-center justify-center transition leading-none"
                                                                 >＋</button>
                                                             </div>
@@ -2610,6 +2890,49 @@
                                                     >清除全部</button>
                                                 </div>
                                             </div>
+                                            {/* 批次輸入暱稱 */}
+                                            <div className="bg-white border-2 border-dashed border-indigo-200 rounded-xl p-4 space-y-2">
+                                                <div className="font-bold text-indigo-800 text-base">📝 批次輸入暱稱</div>
+                                                <div className="text-xs text-indigo-500 leading-relaxed">
+                                                    可直接從 Excel 貼上整欄。兩種格式擇一：<br/>
+                                                    ① 每行一個暱稱，依班級名單的座號順序填入（空白行＝略過該座號）<br/>
+                                                    ② 每行「座號 暱稱」，例如 <span className="font-mono bg-indigo-50 px-1 rounded">3 阿奇</span>、<span className="font-mono bg-indigo-50 px-1 rounded">5,小白</span>（Excel 兩欄貼上也可以）<br/>
+                                                    要連同魚種、能量一起整批匯出入，請到「🐠 魚群設定」使用 Excel 匯出／匯入（檔案內有暱稱欄）。
+                                                </div>
+                                                <textarea
+                                                    value={nickBatchText}
+                                                    onChange={e => setNickBatchText(e.target.value)}
+                                                    rows={6}
+                                                    placeholder={'阿奇\n小白\n\n泡泡'}
+                                                    className="w-full border rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-indigo-400 bg-slate-50"
+                                                />
+                                                <div className="flex flex-wrap gap-2">
+                                                    <button
+                                                        onClick={() => {
+                                                            const { result, withNum, extra } = parseNickBatch(nickBatchText, seatNumbers);
+                                                            Object.keys(result).forEach(k => { if (!seatNumbers.includes(+k)) delete result[k]; });
+                                                            const n = Object.keys(result).length;
+                                                            if (n === 0) { alert('❌ 沒有可套用的暱稱，請確認內容。'); return; }
+                                                            setNicknames(prev => {
+                                                                const next = { ...prev };
+                                                                Object.entries(result).forEach(([k, v]) => { if (v) next[k] = v; else delete next[k]; });
+                                                                return next;
+                                                            });
+                                                            alert(`✅ 已套用 ${n} 位同學的暱稱（${withNum ? '依座號' : '依名單順序'}）。${extra > 0 ? `\n⚠️ 有 ${extra} 行超過班級人數，已忽略。` : ''}`);
+                                                            setNickBatchText('');
+                                                        }}
+                                                        className="bg-indigo-500 hover:bg-indigo-600 text-white px-4 py-2 rounded-lg font-bold text-sm shadow transition"
+                                                    >套用到全班</button>
+                                                    <button
+                                                        onClick={() => setNickBatchText(seatNumbers.map(n => `${n}\t${nicknames[n] || ''}`).join('\n'))}
+                                                        className="bg-white border border-indigo-300 text-indigo-600 hover:bg-indigo-100 px-3 py-2 rounded-lg font-bold text-sm transition"
+                                                    >帶入目前暱稱</button>
+                                                    <button
+                                                        onClick={() => setNickBatchText('')}
+                                                        className="bg-white border border-slate-300 text-slate-500 hover:bg-slate-100 px-3 py-2 rounded-lg font-bold text-sm transition"
+                                                    >清空輸入框</button>
+                                                </div>
+                                            </div>
                                             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
                                                 {seatNumbers.map(num => {
                                                     const stat = fishStats[num] || { type: '🐠' };
@@ -2639,6 +2962,69 @@
                                                 })}
                                             </div>
                                         </div>
+                                    ) : settingsTab === 'class' ? (
+                                        <div className="space-y-5">
+                                            <div className="bg-sky-50 border border-sky-100 rounded-xl p-4 space-y-3">
+                                                <div className="flex flex-wrap items-baseline gap-2">
+                                                    <div className="text-sky-800 font-bold text-lg">👥 班級名單</div>
+                                                    <div className="text-sky-600 text-sm">目前 {roster.length} 位學生（座號可以跳號，最大 {MAX_SEAT} 號）</div>
+                                                </div>
+                                                <div className="flex flex-wrap gap-2 items-center">
+                                                    <input
+                                                        type="text"
+                                                        value={rosterAddText}
+                                                        onChange={e => setRosterAddText(e.target.value)}
+                                                        onKeyDown={e => { if (e.key === 'Enter') addSeatsFromText(); }}
+                                                        placeholder="新增座號，例如 31 或 27-30,35"
+                                                        className="border-2 border-sky-200 rounded-lg px-3 py-2 text-sm w-64 outline-none focus:border-sky-400 bg-white"
+                                                    />
+                                                    <button onClick={addSeatsFromText} className="bg-sky-500 hover:bg-sky-600 text-white px-4 py-2 rounded-lg font-bold text-sm shadow transition">＋ 新增</button>
+                                                </div>
+                                                <div className="flex flex-wrap gap-2">
+                                                    {roster.map(n => (
+                                                        <span key={n} className="inline-flex items-center gap-1 bg-white border border-sky-200 rounded-full pl-3 pr-1 py-1 text-sm font-bold text-sky-800 shadow-sm">
+                                                            {n}
+                                                            <button onClick={() => removeSeat(n)} title={`刪除 ${n} 號`} className="w-5 h-5 rounded-full text-slate-400 hover:bg-red-100 hover:text-red-600 text-xs leading-none transition">✕</button>
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                                <div className="text-xs text-sky-600 leading-relaxed">新增的座號會立刻有一隻新魚；刪除座號會一併清除該同學的魚、能量與暱稱（要刪除前會再確認一次）。</div>
+                                            </div>
+                                            <div className="bg-amber-50 border border-amber-100 rounded-xl p-4 space-y-4">
+                                                <div className="text-amber-800 font-bold text-lg">📋 作業完成區大小</div>
+                                                <label className="block">
+                                                    <div className="flex justify-between text-sm font-bold text-amber-800 mb-1"><span>座號方塊大小</span><span className="tabular-nums">{feedTileSize}</span></div>
+                                                    <input type="range" min="40" max="140" step="4" value={feedTileSize} onChange={e => setFeedTileSize(+e.target.value)} className="w-full" />
+                                                </label>
+                                                <label className="block">
+                                                    <div className="flex justify-between text-sm font-bold text-amber-800 mb-1"><span>中間欄位寬度（聯絡事項＋作業完成區）</span><span className="tabular-nums">{centerColW}%</span></div>
+                                                    <input type="range" min="30" max="55" step="1" value={centerColW} onChange={e => setCenterColW(+e.target.value)} className="w-full" />
+                                                    <div className="text-xs text-amber-600 mt-1">拉寬後，右邊的水族箱會自動縮窄（電腦寬螢幕才有作用）。</div>
+                                                </label>
+                                                <button onClick={() => { setFeedTileSize(68); setCenterColW(40); }} className="bg-white border border-amber-300 text-amber-700 hover:bg-amber-100 px-3 py-1.5 rounded-lg text-sm font-bold transition">恢復預設</button>
+                                            </div>
+                                        </div>
+                                    ) : settingsTab === 'security' ? (
+                                        <div className="max-w-md mx-auto space-y-3">
+                                            <div className="bg-slate-50 border rounded-lg p-4 text-sm text-slate-600 leading-relaxed">
+                                                🔑 <b>變更管理員密碼</b>：儲存後立即生效。密碼不會以明文存放。<br/>
+                                                若忘記密碼，只能清除瀏覽器的網站資料後重新設定（魚群資料也會一併清除，建議平時先匯出 Excel 備份）。
+                                            </div>
+                                            <input type="password" value={newPw} onChange={e => setNewPw(e.target.value)} placeholder="新密碼（至少 4 個字元）" autoComplete="new-password"
+                                                className="border-2 border-slate-300 bg-slate-50 rounded-lg px-4 py-2.5 text-center text-lg tracking-[0.2em] outline-none focus:border-indigo-400 w-full font-mono" />
+                                            <input type="password" value={newPw2} onChange={e => setNewPw2(e.target.value)} placeholder="再輸入一次新密碼" autoComplete="new-password"
+                                                className="border-2 border-slate-300 bg-slate-50 rounded-lg px-4 py-2.5 text-center text-lg tracking-[0.2em] outline-none focus:border-indigo-400 w-full font-mono" />
+                                            <button
+                                                onClick={() => {
+                                                    const err = validateNewPw(newPw, newPw2);
+                                                    if (err) { alert('❌ ' + err); return; }
+                                                    if (savePassword(newPw)) { alert('✅ 新密碼已儲存並立即生效！'); setNewPw(''); setNewPw2(''); }
+                                                }}
+                                                className="w-full bg-indigo-500 hover:bg-indigo-600 text-white py-2.5 rounded-lg font-bold shadow transition"
+                                            >儲存新密碼</button>
+                                        </div>
+                                    ) : settingsTab === 'about' ? (
+                                        aboutContent
                                     ) : settingsTab === 'holidays' ? (
                                         <div className="space-y-4">
                                             <div className="bg-pink-50 p-3 lg:p-4 rounded-lg border border-pink-100 text-pink-800 font-bold text-sm lg:text-base">
@@ -2770,7 +3156,8 @@
                         {/* 左：時間 / 天氣 + 課表 */}
                         <div className="w-full lg:w-[25%] flex flex-col gap-3 sm:gap-4 lg:h-full lg:min-h-0 shrink-0 lg:shrink">
                         <div className="glass-panel rounded-2xl p-4 lg:p-6 relative shrink-0 shadow-xl">
-                            <button onClick={() => setIsSettingsOpen(true)} className="w-10 h-10 rounded-full hover:bg-slate-100 text-slate-300 hover:text-slate-600 transition flex items-center justify-center absolute top-2 right-2 text-xl">⚙️</button>
+                            <button onClick={() => setAuthModal({isOpen: true, action: 'openSettings'})} className="w-10 h-10 rounded-full hover:bg-slate-100 text-slate-300 hover:text-slate-600 transition flex items-center justify-center absolute top-2 right-2 text-xl">⚙️</button>
+                            <button onClick={() => setIsAboutOpen(true)} title="關於" className="w-10 h-10 rounded-full hover:bg-slate-100 text-slate-300 hover:text-slate-600 transition flex items-center justify-center absolute top-2 right-12 text-xl">ℹ️</button>
                             <div className="text-6xl sm:text-7xl lg:text-8xl font-black text-slate-700 tabular-nums leading-none tracking-tight">
                                 {formatTime(adjustedNow).split(':').slice(0,2).join(':')}
                                 <span className="text-2xl sm:text-3xl lg:text-4xl text-slate-400 font-medium ml-1">{formatTime(adjustedNow).split(':')[2]}</span>
@@ -2822,7 +3209,13 @@
                                 📅 今日流程 
                                 {simulatedDay !== 'auto' && <span className="text-xs bg-amber-200 text-amber-800 px-1 rounded">週{['日','一','二','三','四','五','六'][effectiveDay]}</span>}
                             </div>
-                            <div className="flex-1 overflow-y-auto custom-scrollbar p-2 sm:p-3 lg:p-4 space-y-2 sm:space-y-3 lg:space-y-4">
+                            <div
+                                ref={scheduleListRef}
+                                onWheel={onScheduleUserAction}
+                                onTouchStart={onScheduleUserAction}
+                                onTouchMove={onScheduleUserAction}
+                                onPointerDown={onScheduleUserAction}
+                                className="flex-1 overflow-y-auto custom-scrollbar p-2 sm:p-3 lg:p-4 space-y-2 sm:space-y-3 lg:space-y-4">
                                 {schedule.map((slot) => {
                                     const isCurrent = currentSlot && currentSlot.id === slot.id;
                                     return (
@@ -2848,12 +3241,13 @@
                                         </div>
                                     );
                                 })}
+                                <div ref={scheduleSpacerRef} aria-hidden="true" className="shrink-0" style={{ marginTop: 0 }}></div>
                             </div>
                         </div>
                         </div>
 
                         {/* 中：黑板聯絡簿 + 餵食按鈕 */}
-                        <div className="w-full lg:w-[40%] flex flex-col gap-3 sm:gap-4 h-auto min-h-[500px] lg:h-full lg:min-h-0 shrink-0 lg:shrink">
+                        <div className="w-full lg:w-[var(--center-w)] flex flex-col gap-3 sm:gap-4 h-auto min-h-[500px] lg:h-full lg:min-h-0 shrink-0 lg:shrink">
                             {/* 跑馬燈小叮嚀 */}
                             <div className="bg-amber-100 rounded-2xl border-2 border-amber-200 p-3 sm:p-4 shadow-md flex items-center gap-3 sm:gap-4 overflow-hidden shrink-0">
                                 <div className="bg-amber-500 text-white text-sm sm:text-base px-2 sm:px-3 py-1 rounded font-bold shrink-0">提醒</div>
@@ -2912,9 +3306,9 @@
                                 <div className="mt-auto pt-3 border-t border-white/20 shrink-0">
                                     <div className="text-white/80 text-xs sm:text-sm font-bold mb-2 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-1">
                                         <span>{feedTitle}</span>
-                                        <span className="text-green-300 text-[10px] sm:text-xs">綠色:未完成 | 灰色:已完成(座號.(能量⚡)) | 藍灰:請假</span>
+                                        <span className="text-green-300 text-[10px] sm:text-xs">綠色:未完成 | 灰色:已完成(顯示能量⚡) | 藍灰:請假</span>
                                     </div>
-                                    <div className="grid grid-cols-7 sm:grid-cols-13 lg:grid-cols-9 xl:grid-cols-13 gap-1 sm:gap-1.5">
+                                    <div className="grid gap-1.5 sm:gap-2" style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${feedTileSize / 16}rem, 1fr))` }}>
                                         {seatNumbers.map(num => {
                                             const isFed = feedStates[num];
                                             const stat = fishStats[num] || {};
@@ -2931,8 +3325,8 @@
                                                 btnDisabled = true;
                                                 btnTitle = `座號 ${num} 今日請假`;
                                             } else if (isFed) {
-                                                btnClass = "bg-white/5 text-white/35 cursor-not-allowed";
-                                                btnContent = <span className="leading-none tabular-nums whitespace-nowrap opacity-60 text-[10px] sm:text-[11px]">{num}.({stat.streak || 0}⚡)</span>;
+                                                btnClass = "bg-white/15 text-white/95 cursor-not-allowed";
+                                                btnContent = <span className="leading-none tabular-nums whitespace-nowrap tracking-tighter text-[0.9em]">{toCircledNum(num)}⚡{stat.streak || 0}</span>;
                                                 btnDisabled = true;
                                                 btnTitle = `座號 ${num} 已餵食，目前能量 ${stat.streak || 0}⚡`;
                                             } else {
@@ -2948,9 +3342,10 @@
                                                     onClick={() => handleFeedClick(num)}
                                                     disabled={btnDisabled}
                                                     className={`
-                                                        aspect-square sm:aspect-auto sm:py-1 rounded text-xs sm:text-sm font-bold transition flex items-center justify-center ${btnClass}
+                                                        rounded-lg font-bold transition flex items-center justify-center ${btnClass}
                                                     `}
                                                     title={btnTitle}
+                                                    style={{ height: `${feedTileSize * 0.78 / 16}rem`, fontSize: `${feedTileSize * 0.27 / 16}rem` }}
                                                 >
                                                     {btnContent}
                                                 </button>
@@ -2962,12 +3357,12 @@
                         </div>
 
                         {/* 右：全新專屬座號水族箱 */}
-                        <div className="w-full lg:w-[35%] rounded-2xl flex flex-col overflow-hidden shadow-xl relative min-h-[40vh] lg:h-full shrink-0 lg:shrink mb-6 lg:mb-0 border border-blue-300">
+                        <div className="w-full lg:w-[var(--aqua-w)] rounded-2xl flex flex-col overflow-hidden shadow-xl relative min-h-[40vh] lg:h-full shrink-0 lg:shrink mb-6 lg:mb-0 border border-blue-300">
                             {/* 水族箱頂部標題 (兩行：標題與餵食進度 / 功能按鈕) */}
                             <div className="bg-gradient-to-r from-blue-700 to-cyan-600 text-white font-bold shadow-md z-20 flex flex-col gap-2 sm:gap-2.5 px-3 sm:px-4 py-2.5 sm:py-3 shrink-0">
                                 <div className="flex items-center justify-between gap-2">
                                     <span className="text-lg sm:text-xl lg:text-2xl truncate">🌊 水族箱</span>
-                                    <span className="bg-black/20 px-3 py-1 rounded-full text-sm sm:text-base lg:text-lg border border-white/20 shrink-0 tabular-nums">餵食: {completedCount}/{26 - leaveCount}</span>
+                                    <span className="bg-black/20 px-3 py-1 rounded-full text-sm sm:text-base lg:text-lg border border-white/20 shrink-0 tabular-nums">餵食: {completedCount}/{roster.length - leaveCount}</span>
                                 </div>
                                 <div className="flex flex-wrap items-center gap-2">
                                     <button onClick={() => setShowFishIds(!showFishIds)} className="bg-white/20 hover:bg-white/30 rounded-lg px-3 py-1.5 text-sm sm:text-base lg:text-lg transition shrink-0 shadow-sm" title={showFishIds ? "隱藏座號" : "顯示座號"}>
@@ -3186,7 +3581,7 @@
                                     <div className="border-t pt-3">
                                         <div className="text-xs font-bold text-slate-600 mb-1.5">不列入計算的座號（轉學、長期缺席等；點一下切換）</div>
                                         <div className="flex flex-wrap gap-1">
-                                            {Array.from({ length: 26 }, (_, k) => k + 1).map(n => {
+                                            {roster.map(n => {
                                                 const ex = excludedSeats.includes(n);
                                                 return (
                                                     <button key={n} onClick={() => setExcludedSeats(prev => prev.includes(n) ? prev.filter(x => x !== n) : [...prev, n])}
