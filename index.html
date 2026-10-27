@@ -59,6 +59,9 @@
         .chalk-editor:empty::before { content: attr(data-placeholder); color: rgba(255,255,255,0.3); pointer-events: none; }
         .chalk-swatch { width: 1.25rem; height: 1.25rem; border-radius: 9999px; border: 2px solid rgba(255,255,255,0.55); transition: transform .12s, border-color .12s; }
         .chalk-swatch:hover { transform: scale(1.2); border-color: #fff; }
+        /* 能量條：文字大小依能量條寬度自動縮放，太擠時自動縮小以便全部塞入 */
+        .fit-bar { container-type: inline-size; }
+        .fit-bar-text { font-size: 0.9rem; font-size: clamp(0.6rem, 5.6cqw, 1.125rem); }
         .chalk-font {
             font-family: "KaiTi", "BiauKai", cursive;
             text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
@@ -358,7 +361,7 @@
         // 限定小型水族生物 (新增水母與海龜)
         // ===== 版本資訊 =====
         // 版本號規則：程式「最後修改的日期」(YYYYMMDD)；同一天有多次修改時，依序接上英文 a~z（例：20261027 → 20261027a → 20261027b）
-        const APP_VERSION = '20261027h';
+        const APP_VERSION = '20261027k';
         const APP_DESIGNER = '郭柏宏';
         // ===== 班級名單：座號可跳號，上限 MAX_SEAT =====
         const MAX_SEAT = 99;
@@ -3338,17 +3341,17 @@
                             
                             {/* 聯絡簿與按鈕區域整合 */}
                             <div className="flex-1 rounded-2xl p-4 sm:p-5 lg:p-6 chalkboard border-[8px] sm:border-[12px] border-[#5d4037] shadow-2xl relative flex flex-col min-h-[400px]">
-                                {/* 標題區 */}
-                                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end border-b border-white/20 pb-2 sm:pb-3 mb-2 sm:mb-3 gap-2 shrink-0">
-                                    <div className="flex items-baseline gap-2 sm:gap-4">
-                                        <h2 className="text-xl sm:text-2xl lg:text-3xl text-white/90 chalk-font tracking-widest">📋 聯絡事項</h2>
-                                        <div className="text-sm sm:text-lg lg:text-xl text-white/70 chalk-font font-sans">
+                                {/* 標題區：四個類別（聯絡事項／日期／字色／字體大小）可以分成兩行，但每個類別本身不換行 */}
+                                <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2 border-b border-white/20 pb-2 sm:pb-3 mb-2 sm:mb-3 shrink-0">
+                                    <div className="flex flex-wrap items-baseline gap-x-2 sm:gap-x-4 gap-y-1">
+                                        <h2 className="text-xl sm:text-2xl lg:text-3xl text-white/90 chalk-font tracking-widest whitespace-nowrap">📋 聯絡事項</h2>
+                                        <div className="text-sm sm:text-lg lg:text-xl text-white/70 chalk-font font-sans whitespace-nowrap">
                                             {now.getFullYear()}/{now.getMonth()+1}/{now.getDate()} (週{['日','一','二','三','四','五','六'][effectiveDay]})
                                         </div>
                                     </div>
-                                    
-                                    <div className="flex items-center gap-2 self-end sm:self-auto flex-wrap justify-end">
-                                        <div className="flex items-center gap-1.5 mr-1" title="選取文字後點顏色；沒選取時，之後輸入的字會用該顏色">
+
+                                    <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-2 ml-auto">
+                                        <div className="flex items-center gap-1.5 whitespace-nowrap shrink-0" title="選取文字後點顏色；沒選取時，之後輸入的字會用該顏色">
                                             <span className="text-white/60 text-xs font-sans font-bold hidden sm:inline">字色</span>
                                             {CHALK_COLORS.map(col => (
                                                 <button key={col.c} type="button" className="chalk-swatch" style={{ backgroundColor: col.c }}
@@ -3357,8 +3360,10 @@
                                                     onClick={() => applyChalkColor(col.c)} />
                                             ))}
                                         </div>
-                                        <button onClick={() => setContactFontSize(s => Math.max(16, s - 4))} className="text-white/70 hover:text-white border border-white/30 hover:border-white/80 rounded px-2 py-0.5 text-xs sm:text-sm transition font-sans font-bold" title="縮小字體">A-</button>
-                                        <button onClick={() => setContactFontSize(s => Math.min(100, s + 4))} className="text-white/70 hover:text-white border border-white/30 hover:border-white/80 rounded px-2 py-0.5 text-xs sm:text-sm transition font-sans font-bold" title="放大字體">A+</button>
+                                        <div className="flex items-center gap-2 whitespace-nowrap shrink-0">
+                                            <button onClick={() => setContactFontSize(s => Math.max(16, s - 4))} className="text-white/70 hover:text-white border border-white/30 hover:border-white/80 rounded px-2 py-0.5 text-xs sm:text-sm transition font-sans font-bold" title="縮小字體">A-</button>
+                                            <button onClick={() => setContactFontSize(s => Math.min(100, s + 4))} className="text-white/70 hover:text-white border border-white/30 hover:border-white/80 rounded px-2 py-0.5 text-xs sm:text-sm transition font-sans font-bold" title="放大字體">A+</button>
+                                        </div>
                                     </div>
                                 </div>
 
@@ -3465,9 +3470,9 @@
                                                 <button type="button" className="bg-white/20 hover:bg-white/30 rounded-lg px-3 py-1.5 text-sm sm:text-base lg:text-lg transition shrink-0 shadow-sm">
                                                     {ni >= 0 ? '🎯 目標' : '🎉 隊形全解鎖'}
                                                 </button>
-                                                <button type="button" className="relative overflow-hidden flex-1 min-w-[9rem] rounded-lg shadow-sm transition bg-black/25 hover:bg-black/30 border border-white/25">
+                                                <button type="button" className="fit-bar relative overflow-hidden flex-1 min-w-[10rem] rounded-lg shadow-sm transition bg-black/25 hover:bg-black/30 border border-white/25">
                                                     <div className="absolute inset-y-0 left-0 bg-gradient-to-r from-amber-400/85 to-yellow-300/85 transition-all duration-700" style={{ width: `${pct}%` }}></div>
-                                                    <div className="relative flex items-center justify-center gap-3 px-2 py-1.5 text-sm sm:text-base lg:text-lg font-bold text-white tabular-nums whitespace-nowrap" style={{ textShadow: '0 1px 2px rgba(0,0,0,0.65)' }}>
+                                                    <div className="fit-bar-text relative flex items-center justify-center px-2 py-1.5 font-bold text-white tabular-nums whitespace-nowrap" style={{ gap: '0.7em', textShadow: '0 1px 2px rgba(0,0,0,0.65)' }}>
                                                         <span>總能量⚡ {cs.total}{ni >= 0 ? `/${need}` : ''}</span>
                                                         <span>{pct.toFixed(1)}%</span>
                                                         {cs.broken.length > 0 && <span>⚠️</span>}
