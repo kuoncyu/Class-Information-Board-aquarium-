@@ -360,8 +360,8 @@
 
         // 限定小型水族生物 (新增水母與海龜)
         // ===== 版本資訊 =====
-        // 版本號規則：程式「最後修改的日期」(YYYYMMDD)；同一天有多次修改時，依序接上英文 a~z（例：20261027 → 20261027a → 20261027b）
-        const APP_VERSION = '20261027k';
+        // 版本號規則：程式「最後修改的日期」(YYYYMMDD，以台灣時間為準)；同一天有多次修改時，依序接上英文 a~z（例：20261028 → 20261028a → 20261028b）
+        const APP_VERSION = '20261028';
         const APP_DESIGNER = '郭柏宏';
         // ===== 班級名單：座號可跳號，上限 MAX_SEAT =====
         const MAX_SEAT = 99;
@@ -862,6 +862,13 @@
             const [rosterAddText, setRosterAddText] = useState('');
             const [showNextPreview, setShowNextPreview] = useState(false);
             const [previewCreatures, setPreviewCreatures] = useState(() => pickSeaCreatures(10));
+            const [dragHint, setDragHint] = useState('');
+            const dragHintTimerRef = useRef(null);
+            const showDragHint = (msg) => {
+                setDragHint(msg);
+                clearTimeout(dragHintTimerRef.current);
+                dragHintTimerRef.current = setTimeout(() => setDragHint(''), 2600);
+            };
             const [feedTileSize, setFeedTileSize] = useState(() => { const v = parseInt(localStorage.getItem('feed_tile_size_v1'), 10); return (v >= 40 && v <= 140) ? v : 68; });
             const [centerColW, setCenterColW] = useState(() => { const v = parseInt(localStorage.getItem('center_col_w_v1'), 10); return (v >= 30 && v <= 55) ? v : 40; });
             const [pendingImportData, setPendingImportData] = useState(null);
@@ -1275,8 +1282,13 @@
             const handleFishPointerDown = (e, num) => {
                 const fish = fishesLogic.current[num];
                 if (!fish || fish.state === 'dead') return;
-                // 今天還沒吃到飼料：不能拖曳、點擊也沒有表情/動作
-                if (!canInteract(num)) return;
+                // 今天還沒吃到飼料：不能拖曳、點擊也沒有表情/動作（並在畫面上說明原因）
+                if (!canInteract(num)) {
+                    const st = fishStatsRef.current[num];
+                    if (st && st.lastFed !== todayStrRef.current) showDragHint(`${num} 號今天還沒吃到飼料，吃到之後才能拖曳`);
+                    else if (fish.state === 'seek') showDragHint(`${num} 號正在追飼料，吃完再來拖曳`);
+                    return;
+                }
                 if (e.pointerType === 'mouse' && e.button !== 0) return;
                 e.stopPropagation();
                 const el = e.currentTarget;
@@ -3487,6 +3499,9 @@
                             
                             {/* 水族箱本體 */}
                             <div id="aquarium-area" className="flex-1 relative overflow-hidden bg-gradient-to-b from-cyan-300 via-blue-500 to-blue-900">
+                                {dragHint && (
+                                    <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 bg-black/65 text-white text-sm sm:text-base font-bold px-4 py-1.5 rounded-full pointer-events-none whitespace-nowrap shadow-lg">🐟 {dragHint}</div>
+                                )}
                                 {/* 光線折射裝飾 */}
                                 <div className="absolute top-0 left-0 w-full h-32 bg-gradient-to-b from-white/30 to-transparent pointer-events-none z-10"></div>
                                 
